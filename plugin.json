@@ -1,0 +1,12 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "crew",
+  "version": "0.4.0",
+  "description": "Agent roles, a guided setup and task state for Codex and Claude Code, each host with its own configuration and tasks.",
+  "extensions": {
+    "com.openai": {
+      "hooks": "./hooks/codex.json",
+      "onboardingSkill": "./skills/crew/SKILL.md"
+    }
+  }
+}

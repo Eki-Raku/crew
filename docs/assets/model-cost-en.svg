@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="299" viewBox="0 0 760 299" role="img" aria-labelledby="title desc">
+  <title id="title">Estimated cost (USD) · Astra only / Models assigned by Crew role</title>
+  <desc id="desc">Standard API estimates using the same token counts and cache hits.</desc>
+  <defs>
+    <pattern id="astra" width="7" height="7" patternUnits="userSpaceOnUse">
+      <path d="M-2 7 7 -2M2 11 11 2" fill="none" stroke="#665583" stroke-width="1.25" stroke-linecap="round" opacity=".68"/>
+    </pattern>
+    <pattern id="sol" width="7" height="7" patternUnits="userSpaceOnUse">
+      <path d="M-2 1 7 10M3 -3 12 6" fill="none" stroke="#366c64" stroke-width="1.25" stroke-linecap="round" opacity=".68"/>
+    </pattern>
+    <pattern id="terra" width="7" height="7" patternUnits="userSpaceOnUse">
+      <path d="M1 2l1 1m3 3 1 1" fill="none" stroke="#92562f" stroke-width="1.25" stroke-linecap="round" opacity=".68"/>
+    </pattern>
+  </defs>
+  <path d="M7 8 Q205 4 378 7 T752 7 L753 291 Q560 296 381 293 T7 293Z" fill="#fffdf6" stroke="#c6bbab" stroke-width="1.4"/>
+  <path d="M7 8 Q205 4 378 7 T752 7 L753 291 Q560 296 381 293 T7 293Z" transform="translate(1 1)" fill="none" stroke="#c6bbab" stroke-width=".65" opacity=".55"/>
+  <g font-family="system-ui, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif" fill="#373431">
+    <text x="32" y="39" font-size="17" font-weight="650">Estimated cost (USD)</text>
+    <path d="M78 238.00 Q244 237.30 389 238.00 T710 238.00" stroke="#373431"/>
+    <text x="65" y="243.00" text-anchor="end" font-size="14" fill="#5d554b">$0</text>
+    <path d="M78 195.40 Q244 194.70 389 195.40 T710 195.40" stroke="#d4cbbb" stroke-dasharray="3 5"/>
+    <text x="65" y="200.40" text-anchor="end" font-size="14" fill="#5d554b">$30</text>
+    <path d="M78 152.80 Q244 152.10 389 152.80 T710 152.80" stroke="#d4cbbb" stroke-dasharray="3 5"/>
+    <text x="65" y="157.80" text-anchor="end" font-size="14" fill="#5d554b">$60</text>
+    <path d="M78 110.20 Q244 109.50 389 110.20 T710 110.20" stroke="#d4cbbb" stroke-dasharray="3 5"/>
+    <text x="65" y="115.20" text-anchor="end" font-size="14" fill="#5d554b">$90</text>
+    <path d="M78 67.60 Q244 66.90 389 67.60 T710 67.60" stroke="#d4cbbb" stroke-dasharray="3 5"/>
+    <text x="65" y="72.60" text-anchor="end" font-size="14" fill="#5d554b">$120</text>
+    <path d="M197 238 L197 90.69 Q245 89.89 293 90.69 L293 238Z" fill="url(#astra)" stroke="#665583" stroke-width="1.8" stroke-linejoin="round"/>
+    <path d="M197 238 L197 90.69 Q245 89.89 293 90.69 L293 238Z" transform="translate(.75 -.65)" fill="none" stroke="#665583" stroke-width=".7" opacity=".45"/>
+    <text x="245" y="81.69" text-anchor="middle" font-size="19" font-weight="700">$103.74</text>
+    <text x="245" y="270" text-anchor="middle" font-size="17" font-weight="650">Astra only</text>
+    <path d="M496 238 L496 202.79 Q544 201.99 592 202.79 L592 238Z" fill="url(#sol)" stroke="#366c64" stroke-width="1.8" stroke-linejoin="round"/>
+    <path d="M496 238 L496 202.79 Q544 201.99 592 202.79 L592 238Z" transform="translate(.75 -.65)" fill="none" stroke="#366c64" stroke-width=".7" opacity=".45"/>
+    <text x="544" y="193.79" text-anchor="middle" font-size="19" font-weight="700">$24.80</text>
+    <text x="544" y="270" text-anchor="middle" font-size="17" font-weight="650">Models assigned by Crew role</text>
+    <path d="M491 150 Q550 146 600 149" fill="none" stroke="#366c64" stroke-width="1.25" stroke-linecap="round"/>
+    <text x="544" y="142" text-anchor="middle" font-size="17" font-weight="700" fill="#366c64">About 76% lower</text>
+  </g>
+</svg>

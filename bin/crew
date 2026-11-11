@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+if sys.version_info < (3, 11):
+    # Keep this block valid on old interpreters: a hook must explain itself, not crash.
+    found = '%d.%d' % sys.version_info[:2]
+    message = 'Crew needs Python 3.11 or later; this hook ran with Python %s. Crew is inactive in this session.' % found
+    if sys.argv[1:3] == ['hook', 'receive']:
+        import json
+        try: event = json.loads(sys.stdin.read() or '{}')
+        except ValueError: event = {}
+        first = not isinstance(event, dict) or event.get('hook_event_name') in (None, 'SessionStart')
+        print(json.dumps({'systemMessage': message} if first else {}))
+        sys.exit(0)
+    sys.stderr.write(message + '\n')
+    sys.exit(1)
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from crew.cli import main
+main()

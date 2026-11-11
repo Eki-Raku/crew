@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="338" viewBox="0 0 760 338" role="img" aria-labelledby="title desc">
+  <title id="title">Token usage and cost shares by model</title>
+  <desc id="desc">Astra 14.1% / 65.2%. Sol 55.6% / 27.4%. Terra 30.3% / 7.4%.</desc>
+  <defs>
+    <pattern id="astra" width="7" height="7" patternUnits="userSpaceOnUse">
+      <path d="M-2 7 7 -2M2 11 11 2" fill="none" stroke="#665583" stroke-width="1.25" stroke-linecap="round" opacity=".68"/>
+    </pattern>
+    <pattern id="sol" width="7" height="7" patternUnits="userSpaceOnUse">
+      <path d="M-2 1 7 10M3 -3 12 6" fill="none" stroke="#366c64" stroke-width="1.25" stroke-linecap="round" opacity=".68"/>
+    </pattern>
+    <pattern id="terra" width="7" height="7" patternUnits="userSpaceOnUse">
+      <path d="M1 2l1 1m3 3 1 1" fill="none" stroke="#92562f" stroke-width="1.25" stroke-linecap="round" opacity=".68"/>
+    </pattern>
+  </defs>
+  <path d="M7 8 Q205 4 378 7 T752 7 L753 330 Q560 335 381 332 T7 332Z" fill="#fffdf6" stroke="#c6bbab" stroke-width="1.4"/>
+  <path d="M7 8 Q205 4 378 7 T752 7 L753 330 Q560 335 381 332 T7 332Z" transform="translate(1 1)" fill="none" stroke="#c6bbab" stroke-width=".65" opacity=".55"/>
+  <g font-family="system-ui, PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif" fill="#373431">
+    <text x="195" y="64" font-size="20" text-anchor="middle" font-weight="700">Share of tokens</text>
+    <path d="M196.53 84.02 A75 75 0 0 1 252.11 110.38 L233.83 125.94 A51 51 0 0 0 196.04 108.01Z" fill="url(#astra)" stroke="#665583" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M196.53 84.02 A75 75 0 0 1 252.11 110.38 L233.83 125.94 A51 51 0 0 0 196.04 108.01Z" transform="translate(.65 -.65)" fill="none" stroke="#665583" stroke-width=".65" opacity=".38"/>
+    <path d="M254.04 112.75 A75 75 0 1 1 124.64 184.96 L147.15 176.65 A51 51 0 1 0 235.15 127.55Z" fill="url(#sol)" stroke="#366c64" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M254.04 112.75 A75 75 0 1 1 124.64 184.96 L147.15 176.65 A51 51 0 1 0 235.15 127.55Z" transform="translate(.65 -.65)" fill="none" stroke="#366c64" stroke-width=".65" opacity=".38"/>
+    <path d="M123.63 182.06 A75 75 0 0 1 193.47 84.02 L193.96 108.01 A51 51 0 0 0 146.47 174.68Z" fill="url(#terra)" stroke="#92562f" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M123.63 182.06 A75 75 0 0 1 193.47 84.02 L193.96 108.01 A51 51 0 0 0 146.47 174.68Z" transform="translate(.65 -.65)" fill="none" stroke="#92562f" stroke-width=".65" opacity=".38"/>
+    <text x="195" y="157" font-size="23" text-anchor="middle" font-weight="700">83.4M</text>
+    <text x="195" y="179" font-size="13" text-anchor="middle" fill="#5d554b">tokens total</text>
+    <circle cx="84" cy="258" r="6" fill="url(#astra)" stroke="#665583" stroke-width="1.4"/>
+    <text x="98" y="263" font-size="16" >Astra</text>
+    <text x="311" y="263" font-size="16" text-anchor="end" font-weight="650">14.1%</text>
+    <circle cx="84" cy="284" r="6" fill="url(#sol)" stroke="#366c64" stroke-width="1.4"/>
+    <text x="98" y="289" font-size="16" >Sol</text>
+    <text x="311" y="289" font-size="16" text-anchor="end" font-weight="650">55.6%</text>
+    <circle cx="84" cy="310" r="6" fill="url(#terra)" stroke="#92562f" stroke-width="1.4"/>
+    <text x="98" y="315" font-size="16" >Terra</text>
+    <text x="311" y="315" font-size="16" text-anchor="end" font-weight="650">30.3%</text>
+    <path d="M381 45 Q377 167 381 316" fill="none" stroke="#c6bbab" stroke-dasharray="3 5"/>
+    <text x="565" y="64" font-size="20" text-anchor="middle" font-weight="700">Share of estimated cost</text>
+    <path d="M566.53 84.02 A75 75 0 1 1 504.67 203.56 L523.98 189.30 A51 51 0 1 0 566.04 108.01Z" fill="url(#astra)" stroke="#665583" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M566.53 84.02 A75 75 0 1 1 504.67 203.56 L523.98 189.30 A51 51 0 1 0 566.04 108.01Z" transform="translate(.65 -.65)" fill="none" stroke="#665583" stroke-width=".65" opacity=".38"/>
+    <path d="M502.90 201.06 A75 75 0 0 1 530.01 92.66 L541.21 113.89 A51 51 0 0 0 522.77 187.60Z" fill="url(#sol)" stroke="#366c64" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M502.90 201.06 A75 75 0 0 1 530.01 92.66 L541.21 113.89 A51 51 0 0 0 522.77 187.60Z" transform="translate(.65 -.65)" fill="none" stroke="#366c64" stroke-width=".65" opacity=".38"/>
+    <path d="M532.75 91.29 A75 75 0 0 1 563.47 84.02 L563.96 108.01 A51 51 0 0 0 543.07 112.96Z" fill="url(#terra)" stroke="#92562f" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M532.75 91.29 A75 75 0 0 1 563.47 84.02 L563.96 108.01 A51 51 0 0 0 543.07 112.96Z" transform="translate(.65 -.65)" fill="none" stroke="#92562f" stroke-width=".65" opacity=".38"/>
+    <text x="565" y="157" font-size="23" text-anchor="middle" font-weight="700">$24.80</text>
+    <text x="565" y="179" font-size="13" text-anchor="middle" fill="#5d554b">estimated total</text>
+    <circle cx="454" cy="258" r="6" fill="url(#astra)" stroke="#665583" stroke-width="1.4"/>
+    <text x="468" y="263" font-size="16" >Astra</text>
+    <text x="681" y="263" font-size="16" text-anchor="end" font-weight="650">65.2% · $16.16</text>
+    <circle cx="454" cy="284" r="6" fill="url(#sol)" stroke="#366c64" stroke-width="1.4"/>
+    <text x="468" y="289" font-size="16" >Sol</text>
+    <text x="681" y="289" font-size="16" text-anchor="end" font-weight="650">27.4% · $6.79</text>
+    <circle cx="454" cy="310" r="6" fill="url(#terra)" stroke="#92562f" stroke-width="1.4"/>
+    <text x="468" y="315" font-size="16" >Terra</text>
+    <text x="681" y="315" font-size="16" text-anchor="end" font-weight="650">7.4% · $1.84</text>
+  </g>
+</svg>
