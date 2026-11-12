@@ -1,5 +1,6 @@
 """Hook deadlines, executable instructions, and host namespace regressions."""
 import argparse
+import contextlib
 import os
 from pathlib import Path
 import shlex
@@ -48,7 +49,7 @@ class ContextRegressions(unittest.TestCase):
 
     def test_current_schema_initialization_is_read_only_under_writer(self):
         store = cs.ContextStore(self.project)
-        with sqlite3.connect(store.path) as locked:
+        with contextlib.closing(sqlite3.connect(store.path)) as locked:
             locked.execute('BEGIN IMMEDIATE')
             started = time.monotonic()
             reopened = cs.ContextStore(self.project, deadline=started + .5, busy_timeout=.05)
@@ -57,7 +58,7 @@ class ContextRegressions(unittest.TestCase):
 
     def test_hook_degrades_quickly_under_writer_lock(self):
         store = cs.ContextStore(self.project)
-        with sqlite3.connect(store.path) as locked:
+        with contextlib.closing(sqlite3.connect(store.path)) as locked:
             locked.execute('BEGIN IMMEDIATE')
             started = time.monotonic()
             result = context_hooks.handle({'hook_event_name': 'SessionStart', 'session_id': 'busy'}, self.project)
@@ -123,11 +124,17 @@ class ContextRegressions(unittest.TestCase):
             nonlocal observed
             if path == wal:
                 observed += 1
-                if observed == 2: wal.unlink()
+                # Path.is_symlink no longer delegates to Path.lstat on 3.14.
+                # Disappear on the first observed lstat, regardless of caller.
+                wal.unlink(missing_ok=True)
             return original(path, *args, **kwargs)
-        with patch.object(Path, 'lstat', disappearing): store._check_paths()
+        # Link validation is covered separately. Isolate this stat so the test
+        # also fails if the racy exists()+is_file() implementation is restored.
+        with patch.object(core, 'safe_path', side_effect=lambda path: path), \
+                patch.object(Path, 'lstat', disappearing):
+            store._check_paths()
         self.assertFalse(wal.exists())
-        self.assertGreaterEqual(observed, 2)
+        self.assertGreaterEqual(observed, 1)
 
     def test_nonregular_database_sidecar_is_rejected(self):
         store = cs.ContextStore(self.project)
