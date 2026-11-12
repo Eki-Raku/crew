@@ -1,11 +1,13 @@
 import contextlib
 import datetime as dt
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
-import tempfile
+import stat
+import uuid
 import time
 import tomllib
 try:
@@ -13,6 +15,7 @@ try:
 except ImportError:
     fcntl = None
 
+from . import __version__
 from .presets import get_presets
 from . import hosts
 from . import i18n
@@ -39,14 +42,15 @@ def project_root(project):
     return p
 
 def path(scope, project):
-    return (home() / 'crew' if scope == 'global' else project_root(project) / '.crew') / 'config.json'
+    return safe_path((home() / 'crew' if scope == 'global' else project_root(project) / '.crew') / 'config.json')
 
 def empty():
     return {'schema_version': SCHEMA, 'roles': {}}
 
 def read(p):
+    p = safe_path(p)
     if not p.exists(): return empty()
-    try: data = json.loads(p.read_text())
+    try: data = json.loads(read_text(p))
     except (ValueError, OSError) as e: raise Error(f'Cannot read {p}: {e}')
     if not isinstance(data, dict) or data.get('schema_version') != SCHEMA:
         raise Error(f'Unsupported configuration schema: {p}; keep a backup before migrating')
@@ -58,54 +62,131 @@ def read(p):
     for name, value in data['roles'].items(): validate_role(name, value)
     return data
 
-@contextlib.contextmanager
-def lock(p):
-    p.parent.mkdir(parents=True, exist_ok=True)
-    lp = Path(str(p) + '.lock')
-    start = time.monotonic()
-    while True:
-        try:
-            fd = os.open(lp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            os.write(fd, str(os.getpid()).encode()); os.close(fd); break
-        except FileExistsError:
-            if _release_dead_lock(lp): continue
-            if time.monotonic() - start > 2: raise Error(f'Busy or stale lock: {lp}; inspect before removing')
-            time.sleep(.05)
-    try: yield
-    finally: lp.unlink(missing_ok=True)
+def safe_path(p):
+    """Reject links in managed paths, including dangling links and leaf files.
 
-def _release_dead_lock(lp):
-    # Reclaimers must serialize on the stale inode. Once its path is reused,
-    # a reclaimer that still holds the old file must leave the new one alone.
-    if fcntl is None:
-        return False
+    User-selected home/project roots are resolved by their callers. Components
+    below those roots must remain ordinary directories/files, never redirects.
+    """
+    p = Path(os.path.abspath(Path(p).expanduser()))
+    for candidate in (p, *p.parents):
+        if candidate.is_symlink():
+            raise Error(f'Unsafe managed path is a symlink: {candidate}')
+    return p
+
+
+@contextlib.contextmanager
+def directory_fd(p, create=False):
+    """Walk directories without following links; keep writes on the opened inode."""
+    p = safe_path(p)
+    fd = os.open(p.anchor, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        with lp.open() as stale:
-            fcntl.flock(stale, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            pid = int(stale.read())
-            if pid <= 0:
-                return False
+        for part in p.parts[1:]:
+            if create:
+                try: os.mkdir(part, mode=0o700, dir_fd=fd)
+                except FileExistsError: pass
+            try: child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            except OSError as exc:
+                if exc.errno in (errno.ENOTDIR, errno.ELOOP):
+                    raise Error(f'Unsafe managed directory: {p}') from exc
+                raise
+            os.close(fd); fd = child
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _regular_file(fd, p):
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        raise Error(f'Managed path is not a regular file: {p}')
+
+
+def read_text(p):
+    p = safe_path(p)
+    with directory_fd(p.parent) as parent:
+        fd = os.open(p.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        try:
+            _regular_file(fd, p)
+            with os.fdopen(fd, encoding='utf-8', closefd=False) as f: return f.read()
+        finally: os.close(fd)
+
+
+@contextlib.contextmanager
+def lock(p, timeout=2):
+    p = safe_path(p)
+    lp = p.with_name(p.name + '.lock')
+    safe_path(lp)
+    with directory_fd(p.parent, create=True) as parent:
+        start = time.monotonic()
+        while True:
             try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                pass
-            else:
+                fd = os.open(lp.name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+                try:
+                    identity = os.fstat(fd)
+                    os.write(fd, str(os.getpid()).encode())
+                finally: os.close(fd)
+                break
+            except FileExistsError:
+                if _release_dead_lock(lp, dir_fd=parent): continue
+                if time.monotonic() - start >= timeout: raise Error(f'Busy or stale lock: {lp}; inspect before removing')
+                time.sleep(min(.05, max(0, timeout - (time.monotonic() - start))))
+        try:
+            safe_path(p)
+            yield
+        finally:
+            try:
+                if os.path.samestat(identity, os.stat(lp.name, dir_fd=parent, follow_symlinks=False)):
+                    os.unlink(lp.name, dir_fd=parent)
+            except FileNotFoundError: pass
+
+
+def _release_dead_lock(lp, dir_fd=None):
+    # Reclaimers serialize on the stale inode and never follow a lock symlink.
+    if fcntl is None: return False
+    if dir_fd is None:
+        safe_path(lp)
+        with directory_fd(lp.parent) as parent:
+            return _release_dead_lock(lp, dir_fd=parent)
+    try:
+        fd = os.open(lp.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
+        try:
+            _regular_file(fd, lp)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            pid = int(os.read(fd, 64))
+            if pid <= 0: return False
+            try: os.kill(pid, 0)
+            except ProcessLookupError: pass
+            else: return False
+            if not os.path.samestat(os.fstat(fd), os.stat(lp.name, dir_fd=dir_fd, follow_symlinks=False)):
                 return False
-            if not os.path.samestat(os.fstat(stale.fileno()), lp.stat()):
-                return False
-            lp.unlink()
-    except (OSError, ValueError):
-        return False
+            os.unlink(lp.name, dir_fd=dir_fd)
+        finally: os.close(fd)
+    except (OSError, ValueError): return False
     return True
 
+
 def atomic(p, text):
-    p.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix='.' + p.name, dir=p.parent)
-    try:
-        with os.fdopen(fd, 'w') as f: f.write(text); f.flush(); os.fsync(f.fileno())
-        os.replace(tmp, p)
-    finally:
-        if os.path.exists(tmp): os.unlink(tmp)
+    p = safe_path(p)
+    with directory_fd(p.parent, create=True) as parent:
+        tmp = '.' + p.name + '.' + uuid.uuid4().hex
+        fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(text); f.flush(); os.fsync(f.fileno())
+            safe_path(p)  # Fail if the directory/leaf was redirected during preparation.
+            os.replace(tmp, p.name, src_dir_fd=parent, dst_dir_fd=parent)
+        finally:
+            try: os.unlink(tmp, dir_fd=parent)
+            except FileNotFoundError: pass
+
+
+def remove_file(p):
+    p = safe_path(p)
+    with directory_fd(p.parent) as parent:
+        info = os.stat(p.name, dir_fd=parent, follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode): raise Error(f'Managed path is not a regular file: {p}')
+        os.unlink(p.name, dir_fd=parent)
+
 
 def save(p, data): atomic(p, json.dumps(data, ensure_ascii=False, indent=2) + '\n')
 
@@ -113,6 +194,8 @@ def validate_view(value, host=None):
     """Validate one host's role definition (the flat form used by wizard and exports)."""
     host = host or hosts.CURRENT
     if not isinstance(value, dict): raise Error('Role must be an object')
+    unknown = set(value) - {'model', 'effort', 'description', 'instructions', 'disabled'}
+    if unknown: raise Error(f'Unsupported {host} role fields: ' + ', '.join(sorted(unknown)) + '; these fields are not exported. Remove them or manage this agent outside Crew.')
     if value.get('disabled') is True and len(value) == 1: return
     for key in ('model', 'description'):
         if not isinstance(value.get(key), str) or not value[key].strip(): raise Error(f'Missing role field: {key}')
@@ -216,7 +299,7 @@ def setup(apply=False):
     command = str(Path(__file__).resolve().parents[1] / 'bin' / 'crew')
     line = f'Before project work, run the Crew CLI at {json.dumps(command)} with `preflight --project <project-path> --json`; if setup is needed, present its questions and apply the user answers. Respect project disablement.'
     with lock(p):
-        old = p.read_text() if p.exists() else ''
+        old = read_text(p) if p.exists() else ''
         clean = entry_remove(old)
         new = clean + ('' if not clean or clean.endswith('\n') else '\n') + START + '\n' + line + '\n' + END + '\n'
         if apply and new != old:
@@ -231,7 +314,7 @@ def uninstall(apply=False):
     for p in (home() / 'AGENTS.md', home() / 'AGENTS.override.md'):
         if not p.exists(): continue
         with lock(p):
-            old = p.read_text(); new = entry_remove(old)
+            old = read_text(p); new = entry_remove(old)
             if old != new:
                 changed.append(str(p))
                 if apply: atomic(p, new)
@@ -240,12 +323,12 @@ def uninstall(apply=False):
 def receipt_path(project):
     return home() / 'crew' / 'receipts' / (hashlib.sha256(str(project_root(project)).encode()).hexdigest()[:20] + '.json')
 
-def record(event, project, simulated=False):
+def record(event, project, simulated=False, lock_timeout=2):
     # Intentionally never persist conversation content, tool inputs or secrets.
     name = event.get('hook_event_name', event.get('event', 'Unknown'))
     p = receipt_path(project)
-    with lock(p):
-        data = json.loads(p.read_text()) if p.exists() else {'events': [], 'auto_compactions': {}}
+    with lock(p, timeout=lock_timeout):
+        data = json.loads(read_text(p)) if p.exists() else {'events': [], 'auto_compactions': {}}
         sid = str(event.get('session_id', 'unknown'))[:200]
         row = {'event': str(name)[:80], 'session_id': sid, 'time': dt.datetime.now(dt.timezone.utc).isoformat(),
                'simulated': simulated, 'trigger': str(event.get('trigger', ''))[:30]}
@@ -262,7 +345,7 @@ def questions():
             {'id': 'effort', 'per_role': True, 'choices': list(hosts.efforts()), 'question': 'Choose an effort supported by that model.'}]
 
 def export_dir(project, scope='project'):
-    return home() / 'agents' if scope == 'global' else project_root(project).joinpath(*hosts.export().project_dir)
+    return safe_path(home() / 'agents' if scope == 'global' else project_root(project).joinpath(*hosts.export().project_dir))
 
 def preflight(project):
     host, spec = hosts.CURRENT, hosts.export()
@@ -273,13 +356,13 @@ def preflight(project):
     expected = active if cfg['enabled'] else []
     stale = []
     for p in dest.glob(spec.pattern):
-        if spec.managed(p.read_text()):
+        if spec.managed(read_text(p)):
             name = spec.role_id(p)
             if name not in expected: stale.append(name)
     drift.extend(sorted(stale))
     for name in expected:
         try:
-            if not spec.in_sync((dest / spec.filename(name)).read_text(), name, cfg['roles'][name]): drift.append(name)
+            if not spec.in_sync(read_text(dest / spec.filename(name)), name, cfg['roles'][name]): drift.append(name)
         except (OSError, ValueError): drift.append(name)
     legacy = host == 'codex' and ((home() / 'rolepilot' / 'config.json').exists() or (project_root(project) / '.rolepilot' / 'config.json').exists())
     return {'host': host, 'legacy_config_detected': legacy, 'migration_command': 'crew migrate' if legacy else None, 'status': 'needs_export' if drift else ('disabled' if not cfg['enabled'] else ('ready' if active else 'needs_setup')), 'enabled': cfg['enabled'], 'export_drift': drift,
@@ -290,11 +373,11 @@ def preflight(project):
 
 def doctor(project):
     cfg = effective(project); p = receipt_path(project)
-    events = json.loads(p.read_text()) if p.exists() else {'events': [], 'auto_compactions': {}}
-    result = dict(hosts.describe(), preflight=preflight(project), effective=cfg, home=str(home()), hook_receipts=events)
+    events = json.loads(read_text(p)) if p.exists() else {'events': [], 'auto_compactions': {}}
+    result = dict(hosts.describe(), version=__version__, plugin_root=str(Path(__file__).resolve().parents[1]), preflight=preflight(project), effective=cfg, home=str(home()), hook_receipts=events)
     if hosts.CURRENT == 'codex':
         target = agents_target()
-        result.update(codex_home=str(home()), agents_file=str(target), entry_present=target.exists() and START in target.read_text())
+        result.update(codex_home=str(home()), agents_file=str(target), entry_present=target.exists() and START in read_text(target))
         client = 'Host enablement and model entitlement require the actual Codex client.'
     else:
         client = 'Plugin enablement and model access require the actual Claude Code client.'
@@ -321,7 +404,7 @@ def export_agents(project, scope='project', apply=False, clean=False):
     with lock(dest / '.crew-export'):
         reserved = {spec.agent_name(n) for n in active}
         for p in dest.glob(spec.all_files):
-            text = p.read_text()
+            text = read_text(p)
             if p.name in expected and spec.managed(text): continue
             try: declared = spec.declared_name(text)
             except ValueError: raise Error(f'Invalid existing agent TOML: {p}')
@@ -329,13 +412,13 @@ def export_agents(project, scope='project', apply=False, clean=False):
                 raise Error(f'Agent name collision: {p}')
         old = list(dest.glob(spec.pattern))
         for p in old:
-            if not spec.managed(p.read_text()):
+            if not spec.managed(read_text(p)):
                 raise Error(f'Unmanaged file collision: {p}')
         for p in old:
             if p.name not in expected: result['remove'].append(p.name)
         if apply:
             for name, text in expected.items(): atomic(dest / name, text)
-            for name in result['remove']: (dest / name).unlink()
+            for name in result['remove']: remove_file(dest / name)
     if apply and first and expected and host == 'claude':
         result['note'] = 'This agents directory is new. Claude Code only watches agent directories that existed when the session started; restart the session to load these roles.'
     return result

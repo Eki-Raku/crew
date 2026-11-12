@@ -1,0 +1,42 @@
+name: Tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.11', '3.14']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Compile standard-library-only runtime
+        run: python -m compileall -q crew
+      - name: Run isolated unit and regression tests
+        run: python -m unittest discover -s tests -v
+      - name: Validate distributable archive
+        run: |
+          git archive --format=zip --prefix=crew/ HEAD -o /tmp/crew-check.zip
+          python - <<'PY'
+          import json, zipfile
+          with zipfile.ZipFile('/tmp/crew-check.zip') as archive:
+              required = {'crew/bin/crew', 'crew/crew/__init__.py', 'crew/plugin.json',
+                          'crew/.claude-plugin/plugin.json', 'crew/hooks/codex.json',
+                          'crew/hooks/hooks.json', 'crew/skills/crew/SKILL.md', 'crew/LICENSE'}
+              assert required <= set(archive.namelist())
+              assert all('/.git/' not in name and '__pycache__' not in name for name in archive.namelist())
+              portable = json.loads(archive.read('crew/plugin.json'))
+              claude = json.loads(archive.read('crew/.claude-plugin/plugin.json'))
+              assert portable['version'] == claude['version']
+          PY

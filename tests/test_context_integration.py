@@ -56,10 +56,10 @@ class ContextIntegrationTests(unittest.TestCase):
         result = hooks.handle({'hook_event_name':'UserPromptSubmit'},str(self.project))
         self.assertIn('identity unavailable',result['hookSpecificOutput']['additionalContext'])
     def test_claude_cli_manual_flow(self):
-        result = subprocess.run([str(CLI),'context','open','--provider','claude','--session','manual-one','--project',str(self.project),'--lang','zh'],capture_output=True,text=True)
+        result = subprocess.run([str(CLI),'--host','claude','context','open','--provider','claude','--session','manual-one','--project',str(self.project),'--lang','zh'],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         opened=json.loads(result.stdout)
-        r=subprocess.run([str(CLI),'context','read','--task',opened['task_id'],'--project',str(self.project)],capture_output=True,text=True)
+        r=subprocess.run([str(CLI),'--host','claude','context','read','--task',opened['task_id'],'--project',str(self.project)],capture_output=True,text=True)
         self.assertEqual(r.returncode,0,r.stdout+r.stderr)
         self.assertEqual(json.loads(r.stdout)['state'],{})
 

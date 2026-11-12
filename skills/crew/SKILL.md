@@ -5,9 +5,9 @@ description: Configure agent roles with a resumable, preview-first setup wizard,
 
 # Crew
 
-Use the bundled CLI at `bin/crew` relative to this plugin root, with Python 3.11+. All noninteractive commands return JSON; inspect exit codes. Never start another Codex or Claude Code process to use this tool.
+Use the bundled CLI at `bin/crew` relative to this plugin root, with Python 3.11+. Follow the fully quoted absolute command supplied by a hook; replace its action/arguments as needed and retain the interpreter, script, --host and --project. Bare crew examples below assume that this same plugin bin directory is on PATH. All noninteractive commands return JSON; inspect exit codes. Never start another Codex or Claude Code process to use this tool.
 
-Codex and Claude Code keep separate homes, roles and task stores. The host is chosen by `--host codex|claude`, then `CREW_HOST`, then the detected environment, then Codex. Pass `--host` explicitly whenever the answer must be unambiguous. A role defined for one host is invisible to the other; `hosts.claude` inside a role carries Claude Code's model and effort, while the top-level fields belong to Codex. Presets copy the other host's description and prompt once when a role is first created for this host.
+Codex and Claude Code keep separate homes, roles and task stores. The host is chosen by `--host codex|claude`, then `CREW_HOST`, then the detected environment, then Codex. Pass `--host` explicitly whenever the answer must be unambiguous. A role defined for one host is invisible to the other; `hosts.claude` inside a role carries Claude Code's model and effort, while the top-level fields belong to Codex. When role create omits description or instructions, it can copy those fields once from the other host in the same scope. Presets install always imports bundled templates, not the other host's custom prompt.
 
 ## First-use and onboarding
 
@@ -25,7 +25,7 @@ Pause safely by stopping. Run init again to resume. `--reset --apply` starts a n
 
 Five bundled templates: coordinator, implementer, reviewer, researcher, tester. View full prompts with `presets list` or saved `role show NAME`. `presets install [names...] --model ID --effort LEVEL` imports missing templates only. For custom roles use `role create`; edit with `role update --instructions-file FILE` or `--instructions TEXT`. Omitted/empty instructions create an explicit empty_agent. Preserve an intentionally empty prompt rather than inventing a replacement. `role enable` restores saved definitions or removes inherited-role masks. `--effort` values differ per host: Codex accepts minimal/low/medium/high/xhigh, Claude Code accepts low/medium/high/xhigh/max.
 
-Use `--lang zh|en` or CREW_LANG for interface language; template imports also accept `--prompt-lang`. Never translate stored user prompts just because the interface language changes.
+Use `--lang zh|en` or CREW_LANG for interface language; template imports also accept `--prompt-lang`. Never translate stored user prompts or task state just because the interface language changes. Supported role fields are model, effort, description, instructions and disabled. Unknown fields, including Claude tools, permissionMode and skills, are rejected: Crew does not implement those controls. Do not remove a requested permission restriction merely to make export succeed; keep the agent outside Crew if needed.
 
 ## Diagnostics and limits
 
@@ -37,7 +37,7 @@ No model calls, credential collection, spending or current-controller changes ar
 
 ## Shared task context
 
-When a Crew hook provides task_id and version, use that task record. Without a hook, run `crew context open --provider <host> --session <actual-session-identity>`; the provider defaults to the selected host. Pass `--task <known-id>` to share another role's task deliberately. Never invent an unrelated real host session identity, and never present another host's task ID as this host's: each host has its own store, and a task ID from the other host will not be found here. The store uses repository scope and exact provider/session association. Host hook session_id can cover a session tree/fork; it is not a verified AppServer threadId.
+When a Crew hook provides task_id and version, use that task record. Without a hook, run `crew --host <host> context open --session <actual-session-identity>`; provider defaults to that host. If supplied, --provider must match --host; a mismatch is rejected before any store is opened. Pass `--task <known-id>` to share another role's task deliberately. Never invent an unrelated real host session identity, and never present another host's task ID as this host's: each host has its own store, and a task ID from the other host will not be found here. The store uses repository scope and exact provider/session association. Host hook session_id can cover a session tree/fork; it is not a verified AppServer threadId.
 
 Read the full task state once with `context read --task ID`, and read global/project `context decisions`. Retain returned task_id/version and decision digests locally. On later turns read `context read --task ID --since LAST_SEEN_VERSION` only when version changes. Apply `changes` and `removed` to the local cache. Never advance your known version beyond a successfully read response. Refresh scoped decisions when their digest changes. A new agent starts with a full read; it cannot inherit another agent's in-memory version cursor.
 

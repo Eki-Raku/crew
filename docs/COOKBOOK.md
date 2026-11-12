@@ -91,3 +91,30 @@ crew --host codex hook status
 ```
 
 先用 `preflight` 确认配置和导出状态，再用 `doctor` 检查宿主、入口与 Hook。用 `hook status` 查看已有的事件回执。
+
+## 支持字段与安全边界
+
+角色目前只支持 `model`、`effort`、`description`、`instructions`、`disabled`。不支持的字段会报错，而不是导出时静默丢弃。例如 Claude 的 `tools`、`permissionMode`、`skills` 并未由 Crew 实现；如果需要这些控制，请在 Crew 之外维护对应 agent。不要为了通过校验而删掉用户要求的权限限制。
+
+项目 `.crew`、`.codex/agents`、`.claude/agents` 及它们的受管理文件不能使用符号链接。全局 `crew` 数据目录、数据库及其 `-wal`、`-shm`、`-journal` 同样拒绝链接。请先备份，再把受管理数据放到普通目录。显式选择的项目根与宿主 home 会规范化为真实路径；显式 CREW_DATA_HOME 只规范化其父目录（兼容 macOS /tmp、/var 别名），数据目录本身仍不能是链接；不要把项目受管理目录链接到全局目录。SQLite 检查会在每次连接前执行，但不声称能隔离同一账户下另一个恶意进程的持续并发改动。
+
+手动使用 Claude 时，所有后续命令都带 `--host claude`，例如 `crew --host claude context open --session SESSION_ID`。`--provider` 默认与所选宿主一致；显式不一致会直接拒绝且不会创建数据库。`doctor` 返回版本与插件根目录，方便检查 PATH 是否指向另一份安装。Hook 提供的后续命令已包含当前 Python、插件绝对路径、宿主和项目，优先使用它。
+
+Hook 的内部共享预算为 2 秒，Unix 主进程外层时限为 2.5 秒，低于清单中最短的 3 秒。数据库繁忙、回执等锁或 Git 探测超时会返回非阻塞提示，不推断任务已归档或删除。该预算不等于对操作系统不可中断 I/O 的硬实时保证。
+
+## 备份、升级与回退
+
+1. 先停止旧版本的 Hook 写入，例如关闭使用它的宿主会话。备份项目 `.crew`、项目导出的 `crew-*` 文件，以及各宿主 home 下的 `crew` 目录。Codex home 默认 `~/.codex`，可由 `CODEX_HOME` 改写；Claude 默认 `~/.claude`，可由 `CLAUDE_CONFIG_DIR` 改写；`CREW_DATA_HOME` 若设置，数据库在该目录。复制 SQLite 时应停止所有写入并连同现存 sidecar 一起备份，或使用 SQLite 在线备份 API，不要在写入中只拷贝主文件。
+2. 用新源码目录或新发行包替换插件。保留旧目录以便回退。Git 源码修复不自动更新已有 release ZIP；以实际版本为准。
+3. 对每个使用的宿主运行 `--host HOST doctor`、`--host HOST export`；检查目标、增删文件和未知字段报错，再执行 `--host HOST export --apply`。全局导出需要另外明确 `--scope global`，不会从项目复制覆盖值。
+4. 如果之前为 Codex 执行过 `setup --apply` 且插件路径变了，重新预览 `setup` 再 `setup --apply`，更新全局入口中的绝对路径。Claude 不需要该入口。重新开启宿主会话，使新 Hook 和首次创建的 agents 目录生效。
+5. 回退时停止新 Hook，换回保留的旧插件，再从备份恢复配置/导出；0.4.1 不改变 SQLite schema。回退也会恢复旧版本的已知问题，不建议继续处理不可信项目。`uninstall --apply` 仅移除 Crew 标记入口，不删除配置、任务或导出；`export --clean --apply` 只清理当前作用域的受管理导出。
+
+## 独立验证
+
+```sh
+python3 -m compileall -q crew
+python3 -m unittest discover -s tests -v
+```
+
+测试使用临时配置、临时数据库和模拟 Hook，不启动 Codex 或 Claude Code。CI 矩阵为 Linux/macOS、Python 3.11/3.14，并检查插件清单版本和发行归档结构。真实宿主加载、Hook 信任、模型可用性和 UI 仍须单独验收；当前不声明已验证的宿主版本。

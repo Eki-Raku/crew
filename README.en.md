@@ -96,3 +96,13 @@ Each host keeps its own roles and task state. Sessions can share a task within t
 **Does Crew switch the model in my main session?**
 
 Role settings apply to exported subagents. Select the main session model in your host.
+
+## Safety, upgrades, and verification
+
+Crew supports only `model`, `effort`, `description`, `instructions`, and `disabled` role fields. Unsupported fields are rejected, including Claude tool/permission settings Crew does not implement. Keep agents requiring those controls outside Crew; do not remove a restriction merely to make an export pass. Managed configuration/export paths and SQLite files must not be symlinks.
+
+Use explicit `--host` for manual context commands. An explicit `--provider` must match it. Hooks return commands with the active Python and plugin path rather than relying on PATH. `doctor` reports the plugin version and directory.
+
+Before upgrading, stop hook writers and back up each host's Crew directory, project `.crew`, and managed exports. Copy SQLite with all existing sidecars while writers are stopped, or use SQLite's backup API. Preview exports again before applying; rerun Codex `setup` if its installed path changed. Source updates do not update an existing release ZIP. See the [upgrade and rollback guide](docs/COOKBOOK.md#备份升级与回退) and [changelog](CHANGELOG.md).
+
+Run `python3 -m unittest discover -s tests -v` from the plugin directory. CI covers Linux/macOS with Python 3.11/3.14 and validates archive contents. Tests do not launch a host or call models. Actual host loading, hook trust, and model availability require separate verification; no tested host-version baseline is claimed. Path checks do not sandbox another local process continuously racing SQLite's own file opens.

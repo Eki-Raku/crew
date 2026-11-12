@@ -11,7 +11,7 @@ def say(value): print(i18n.t(value))
 def register(command):
     p = command('context')
     p.add_argument('action', choices=['open', 'read', 'patch', 'checkpoint', 'list', 'archive', 'delete', 'restore', 'session-state', 'decisions', 'decision-set', 'decision-delete', 'decision-restore', 'stats'])
-    p.add_argument('--provider', choices=['codex', 'claude'], help='Session provider (defaults to the selected host)')
+    p.add_argument('--provider', choices=['codex', 'claude'], help='Session provider; must match --host (defaults to the selected host)')
     p.add_argument('--session'); p.add_argument('--task'); p.add_argument('--title')
     p.add_argument('--since', type=int); p.add_argument('--expected-version', type=int)
     p.add_argument('--file', help='UTF-8 JSON state patch or checkpoint')
@@ -30,11 +30,18 @@ def required(args, *names):
         if getattr(args, name) is None: raise c.Error('Missing argument: --' + name.replace('_', '-'))
 
 
+def selected_provider(provider):
+    provider = provider or hosts.CURRENT
+    if provider != hosts.CURRENT:
+        raise c.Error(f'Provider {provider} does not match selected host {hosts.CURRENT}; rerun with --host {provider} to use its context store')
+    return provider
+
+
 def run(args, project):
     from .context_store import ContextStore
+    args.provider = selected_provider(args.provider)
     store = ContextStore(project)
     action = args.action
-    if args.provider is None: args.provider = hosts.CURRENT
     if action == 'open':
         required(args, 'session')
         return store.open_session(args.provider, args.session, task_id=args.task, title=args.title)
@@ -75,7 +82,7 @@ def menu(project, ask, output):
         try:
             if choice == '1': output(store.list_tasks(include_archived=True))
             elif choice == '2':
-                provider = ask('Provider (codex/claude)', hosts.CURRENT)
+                provider = selected_provider(ask('Provider (codex/claude)', hosts.CURRENT))
                 session = ask('Session ID'); task = ask('Shared task ID (empty creates/resumes)') or None
                 output(store.open_session(provider, session, task_id=task, title=ask('Title') or None))
             elif choice == '3':
@@ -84,7 +91,7 @@ def menu(project, ask, output):
             elif choice in ('4', '5'):
                 task = ask('Task ID'); version = int(ask('Expected version'))
                 data = json.loads(Path(ask('JSON file')).expanduser().read_text())
-                output(data)
+                output({'state': data})
                 if ask('Save? y/N').lower() == 'y':
                     output(getattr(store, 'patch' if choice == '4' else 'checkpoint')(task, version, data))
             elif choice == '6':
@@ -92,7 +99,7 @@ def menu(project, ask, output):
                 if operation not in ('archive', 'delete', 'restore'): raise c.Error('Invalid action')
                 if ask('Confirm? y/N').lower() == 'y': output(getattr(store, operation)(task))
             elif choice == '7':
-                provider = ask('Provider (codex/claude)', hosts.CURRENT); session = ask('Session ID')
+                provider = selected_provider(ask('Provider (codex/claude)', hosts.CURRENT)); session = ask('Session ID')
                 task = ask('Current task ID'); status = ask('active/archived/deleted/unknown', 'unknown')
                 if ask('Confirm? y/N').lower() == 'y': output(store.session_state(provider, session, status, source='manual', expected_task_id=task))
             elif choice == '8':

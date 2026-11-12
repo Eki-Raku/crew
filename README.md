@@ -96,3 +96,13 @@ Crew 在本地配置角色和任务状态。模型的登录、权限与用量由
 **Crew 会自动切换主会话的模型吗？**
 
 角色设置用于导出的子代理。主会话的模型在宿主里选择。
+
+## 安全、升级与验证
+
+角色仅支持 `model`、`effort`、`description`、`instructions`、`disabled`。未实现的字段会明确拒绝，包括 Claude 的工具/权限控制；需要这些控制的 agent 请在 Crew 之外维护，不要为了导出而删掉权限限制。受管理配置、导出及 SQLite 文件不允许使用符号链接。
+
+手工共享任务命令请明确传入 `--host`；显式 `--provider` 必须与它一致。Hook 返回带当前 Python、插件路径、宿主和项目的命令，`doctor` 显示版本与插件目录。
+
+升级前停止 Hook 写入并备份各宿主 Crew 数据、项目配置和导出，再预览新导出。源码更新不会自动替换已有 release ZIP。[备份、升级与回退](docs/COOKBOOK.md#备份升级与回退) · [变更记录](CHANGELOG.md)
+
+独立测试命令：`python3 -m unittest discover -s tests -v`。CI 覆盖 Linux/macOS、Python 3.11/3.14，并验证归档结构；测试不启动真实宿主或模型。宿主加载、Hook 信任和模型可用性仍需单独验收，当前不声明已验证的宿主版本。

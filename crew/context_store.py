@@ -14,6 +14,7 @@ import math
 import os
 from pathlib import Path
 import sqlite3
+import stat
 import subprocess
 import time
 import uuid
@@ -110,7 +111,16 @@ def _timestamp(value=None):
     return float(value)
 
 
-def project_scope(project):
+def _remaining(deadline, maximum):
+    if deadline is None:
+        return maximum
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ContextError('Shared context deadline exceeded')
+    return min(maximum, remaining)
+
+
+def project_scope(project, *, deadline=None):
     """Resolve worktrees to their Git common directory without reading sessions.
 
     A non-Git project uses core's project-root markers. Ignore inherited Git
@@ -120,40 +130,67 @@ def project_scope(project):
     env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
     try:
         result = subprocess.run(['git', '-C', str(root), 'rev-parse', '--git-common-dir'],
-                                capture_output=True, text=True, timeout=5, env=env)
+                                capture_output=True, text=True, timeout=_remaining(deadline, 5), env=env)
         if result.returncode == 0 and result.stdout.strip():
             common = Path(result.stdout.strip())
             common = (common if common.is_absolute() else root / common).resolve()
             identity = 'git:' + str(common)
         else:
             identity = 'directory:' + str(root)
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired as exc:
+        raise ContextError('Git scope detection timed out; context was not opened in a different scope') from exc
+    except OSError:
         identity = 'directory:' + str(root)
     return hashlib.sha256(identity.encode()).hexdigest(), identity
 
 
 class ContextStore:
-    def __init__(self, project, data_home=None):
+    def __init__(self, project, data_home=None, *, deadline=None, busy_timeout=10.0):
+        self.deadline = deadline
+        self.busy_timeout = busy_timeout
         self.project = Path(project).expanduser().resolve()
-        self.scope_id, self.scope_identity = project_scope(project)
+        self.scope_id, self.scope_identity = project_scope(project, deadline=deadline)
         selected = data_home if data_home is not None else os.environ.get('CREW_DATA_HOME')
-        self.data_home = Path(selected).expanduser().resolve() if selected else core.home() / 'crew'
+        if selected:
+            # An explicit data root is a user-selected boundary. Normalize its
+            # parent (including macOS /tmp and /var aliases), never its leaf.
+            requested = Path(selected).expanduser().absolute()
+            self.data_home = requested.parent.resolve() / requested.name
+        else:
+            self.data_home = core.home() / 'crew'
+        core.safe_path(self.data_home)
         self.data_home.mkdir(parents=True, exist_ok=True, mode=0o700)
         filename = 'context.sqlite3' if hosts.CURRENT == 'codex' else 'context.claude.sqlite3'
         self.path = self.data_home / filename
         # New files are private from creation; never change existing permissions.
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+        self._check_paths()
+        fd = os.open(self.path, os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0), 0o600)
         os.close(fd)
         try:
             self._initialize()
         except sqlite3.Error as exc:
             raise ContextError(f'Cannot initialize context database: {exc}') from exc
 
+    def _check_paths(self):
+        # SQLite opens its own sidecars. Reject existing symlinks before each
+        # connection; this is not isolation against concurrent local mutation.
+        for path in (self.path, *(Path(str(self.path) + suffix)
+                                  for suffix in ('-wal', '-shm', '-journal'))):
+            core.safe_path(path)
+            try: mode = path.lstat().st_mode
+            except FileNotFoundError: continue  # SQLite may remove an idle WAL between connections.
+            if not stat.S_ISREG(mode):
+                raise ContextError(f'Context database path is not a regular file: {path}')
+
     def _connect(self):
-        conn = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+        self._check_paths()
+        timeout = _remaining(self.deadline, self.busy_timeout)
+        conn = sqlite3.connect(self.path, timeout=timeout, isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute('PRAGMA foreign_keys=ON')
-        conn.execute('PRAGMA busy_timeout=10000')
+        conn.execute('PRAGMA busy_timeout=' + str(max(0, int(timeout * 1000))))
+        if self.deadline is not None:
+            conn.set_progress_handler(lambda: int(time.monotonic() >= self.deadline), 100)
         return conn
 
     def _initialize(self):
@@ -161,6 +198,9 @@ class ContextStore:
             existing = conn.execute('PRAGMA user_version').fetchone()[0]
             if existing not in (0, SCHEMA_VERSION):
                 raise ContextError(f'Unsupported context schema {existing}; keep a backup before migrating')
+            if existing == SCHEMA_VERSION:
+                return  # Current databases must not acquire a schema write lock on each hook.
+            _remaining(self.deadline, self.busy_timeout)
             conn.execute('PRAGMA journal_mode=WAL')
             conn.executescript('''
                 BEGIN IMMEDIATE;
@@ -203,6 +243,7 @@ class ContextStore:
         try:
             conn.execute('BEGIN IMMEDIATE' if write else 'BEGIN')
             yield conn
+            _remaining(self.deadline, self.busy_timeout)
             conn.commit()
         except sqlite3.Error as exc:
             conn.rollback()

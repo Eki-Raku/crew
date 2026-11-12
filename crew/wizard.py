@@ -71,7 +71,7 @@ def advance(scope, project, answer=None, step=None, revision=None, apply=False, 
     with c.lock(p):
         if reset and not apply: raise c.Error('Reset requires --apply; saved role configuration is retained')
         if p.exists() and not reset:
-            try: state = json.loads(p.read_text())
+            try: state = json.loads(c.read_text(p))
             except (ValueError, OSError) as e: raise c.Error(f'Invalid onboarding draft: {e}')
             if not isinstance(state, dict) or state.get('schema_version') != 1: raise c.Error('Unsupported onboarding draft')
             if not isinstance(state.get('revision'), int) or not isinstance(state.get('roles'), dict) or not isinstance(state.get('models'), list) or state.get('language') not in ('zh', 'en') or not isinstance(state.get('completed'), bool): raise c.Error('Invalid onboarding draft fields')

@@ -123,7 +123,10 @@ def with_enabled(config, value, host=None):
 
 # ---- exported agent files ----
 
-def _quote(value): return json.dumps(value, ensure_ascii=False)
+def _quote(value):
+    # JSON and TOML basic strings differ at DEL; escape it rather than emit an
+    # illegal literal. Keep Unicode readable and preserve the original value.
+    return json.dumps(value, ensure_ascii=False).replace('\x7f', '\\u007f')
 
 
 class CodexExport:
@@ -146,6 +149,7 @@ class CodexExport:
         for key, value in [('name', cls.agent_name(name)), ('description', role['description']), ('model', role['model']),
                            ('model_reasoning_effort', role['effort']), ('developer_instructions', role['instructions'])]:
             text += key + ' = ' + _quote(value) + '\n'
+        tomllib.loads(text)  # Never report a successful export of invalid TOML.
         return text
 
     @staticmethod

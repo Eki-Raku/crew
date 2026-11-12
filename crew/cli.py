@@ -4,6 +4,9 @@ import json
 import os
 from pathlib import Path
 import sys
+import signal
+import threading
+import time
 from . import __version__
 from . import core as c
 from . import hosts
@@ -129,7 +132,35 @@ def hook_banner(state):
         text += ' ' + i18n.f('{count} role(s) are configured for the other host only.', count=len(state['roles_for_other_hosts_only']))
     return text
 
+class HookDeadline(BaseException):
+    """Bypass inner diagnostic handlers, so a spent budget cannot restart work."""
+
+
 def hook_receive(project):
+    # Supported hosts run hooks in a Unix main process. Bound *all* work, not
+    # each SQLite/Git/receipt wait separately, below the shortest host timeout.
+    deadline = time.monotonic() + 2.0
+    timed = hasattr(signal, 'setitimer') and threading.current_thread() is threading.main_thread()
+    if timed:
+        old_handler = signal.getsignal(signal.SIGALRM)
+        old_timer = signal.getitimer(signal.ITIMER_REAL)
+        started = time.monotonic()
+        def expired(signum, frame): raise HookDeadline()
+        signal.signal(signal.SIGALRM, expired)
+        signal.setitimer(signal.ITIMER_REAL, min(2.5, old_timer[0]) if old_timer[0] else 2.5)
+    try:
+        return _hook_receive(project, deadline)
+    except HookDeadline:
+        return {'systemMessage': 'Crew hook exceeded its time budget. Continue with current work; shared context is temporarily unavailable. No lifecycle deletion was inferred.'}
+    finally:
+        if timed:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, old_handler)
+            if old_timer[0]:
+                signal.setitimer(signal.ITIMER_REAL, max(.001, old_timer[0] - (time.monotonic() - started)), old_timer[1])
+
+
+def _hook_receive(project, deadline):
     """Handle one host hook event. Never exits nonzero: exit code 2 would block the user's prompt."""
     event = None
     try:
@@ -147,9 +178,9 @@ def hook_receive(project):
         project = event.get('cwd', project)
         if not isinstance(project, str): raise c.Error('Invalid cwd')
         try:
-            c.record(event, project)
+            c.record(event, project, lock_timeout=.15)
             from . import context_hooks
-            result = context_hooks.handle(event, project)
+            result = context_hooks.handle(event, project, deadline=deadline)
             if name == 'SessionStart':
                 state = c.preflight(project)
                 summary = {k: state[k] for k in ('host', 'status', 'enabled', 'roles', 'stale_exports')}

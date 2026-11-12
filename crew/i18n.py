@@ -133,7 +133,9 @@ def t(value):
 
 # Translate human-facing fields only; role prompts, paths and identifiers are data.
 TEXT_FIELDS = {'next_steps', 'presentation', 'message', 'note', 'next', 'question', 'model_selection', 'limitations'}
+DATA_FIELDS = {'state', 'changes', 'roles', 'add', 'presets', 'decisions', 'orientation'}
 def localize(value, key=None):
+    if key in DATA_FIELDS: return value
     if isinstance(value, dict): return {k: localize(v, k) for k, v in value.items()}
     if isinstance(value, list): return [localize(v, key) for v in value]
     return t(value) if key in TEXT_FIELDS else value
