@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1
+
+- 基于 OpenAI Codex 文档与实测二进制（`codex-cli 0.169.0`）约束收紧并落地子智能体命名规则：
+  - Crew 统一显示名改为中文全角方括号 `【模型名】角色名`（规避 Codex 对英文方括号的拒绝）。
+  - Codex 原生 `nickname_candidates`（导出至 `.codex/agents/crew-*.toml`）与 `spawn_agent` 的 `task_name` 分别严格遵循 Codex 校验规则（`^[A-Za-z0-9 _-]+$` 与 `^[a-z0-9_]+$`，如 `gpt-6-1-sol implementer`、`gpt_6_1_sol_implementer`），不再让 Codex 随机分配默认昵称或主控自拟 `implementer`。
+  - `workflow dispatch` 一次性预计算并持久化所有名称变量（`display_name`、`task_name`、`native_nicknames`）；非工作流场景新增 `crew role spawn <name> [--count N]` 返回同一套固定变量。
+  - `PreToolUse` 硬门禁拦截任何未先派发、缺少标记或自拟 `task_name` 的受管角色创建；`workflow report` 记录 Codex 实际返回的 `native_nickname_observed`。
+- 兼容 Codex `multi_agent_v2`（`0.169.0`）不触发 `spawn_agent` Pre/PostToolUse 的路径：在存在待绑定槽位时，允许 `SubagentStart` 按精确导出角色绑定已派发槽位（仍保持审查独立性与 `v1` Pre/PostToolUse 优先校验）。
+- 新增第 6 个默认角色模板 `documenter`（文档记录员），用于维护开发文档、测试文档与 LLM Wiki / Notion 知识库记录。
+
 ## 0.5.0
 
 - 规范统一调配子智能体命名格式为 `[模型名]角色名`（如 `[gpt-6.1-sol]实施者` / `[gpt-6.1-sol]implementer`）：内置角色随 `--lang` 语言设置显示中文或英文角色名，自定义角色保留角色 ID；底层 `agent_type` 保持不变。同步输出至 `preflight.subagent_names`、SessionStart 摘要、`dispatch_input.name`、派发消息头、`workflow report`、`SubagentStart` 上下文与 `coordinator` 预设提示词。
