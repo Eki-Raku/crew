@@ -12,7 +12,7 @@ crew workflow read --task '<task_id>'
 crew workflow dispatch --task '<task_id>' --expected-version 1 [--count 1]
 ```
 
-协调者把返回的 `dispatch_input`（并行时为 `dispatch_inputs` 列表）原样用于宿主 `spawn_agent`，可在 message 后追加代码位置、相关资料和互不重叠的子任务范围。`--count` 受角色配置中的 `max_instances`（默认 `1`）限制，工作量较大时可按上限同时派发多个同类实例并行执行，并在名称后附加 `#1`、`#2` 区分。`dispatch_input.name`（及 `preflight.subagent_names`、`workflow report` 中的 `subagent_name`）按 `[模型名]角色名` 规范生成统一显示名（内置角色随 `--lang` 显示中英文，自定义角色保留角色 ID），底层 `agent_type`（`crew_<role>` / `crew-<role>`）保持不变以兼容宿主标识校验。Hook 通过显式标记和 tool_use_id 关联派发，再用成功返回的 agent_id 匹配生命周期事件。生命周期事件提前到达时暂存并按精确 ID 关联。
+协调者把返回的 `dispatch_input`（并行时为 `dispatch_inputs` 列表）的 `agent_type`、`task_name`、`message` 原样用于宿主 `spawn_agent`——名字由 `workflow dispatch` 一次性算好并存入状态，Hook 会拦截不一致、缺少标记或自拟 `task_name` 的创建（见下方「命名约束」）。可在 message 后追加代码位置、相关资料和互不重叠的子任务范围。`--count` 受角色配置中的 `max_instances`（默认 `1`）限制，工作量较大时可按上限同时派发多个同类实例并行执行，并在名称后附加 `#1`、`#2` 区分。`dispatch_input.name`（及 `preflight.subagent_names`、`workflow report` 中的 `subagent_name`）按 `【模型名】角色名` 规范生成统一显示名（内置角色随 `--lang` 显示中英文，自定义角色保留角色 ID），底层 `agent_type`（`crew_<role>` / `crew-<role>`）保持不变以兼容宿主标识校验。Hook 通过显式标记和 tool_use_id 关联派发，再用成功返回的 agent_id 匹配生命周期事件。生命周期事件提前到达时暂存并按精确 ID 关联。
 
 实施返回后，读取版本，再登记交付：
 
@@ -30,6 +30,24 @@ crew workflow finish --task ID --expected-version N
 - `cancel --reason '用户取消'`：取消当前工作流。宿主 agent 的终止由协调者调用宿主工具。
 - `next --goal '下一个目标' --acceptance '验收要求'`：完成或取消后在同一会话开始新一轮。
 - TUI 的 `13 Engineering workflow` 可进行上述管理。
+
+## 命名约束（Codex）
+
+依据 Codex 0.169.0 实际行为（二进制中的校验与线程库记录），而非推测：
+
+| 名称 | 谁决定 | 约束 |
+|---|---|---|
+| `task_name`（面板里的 `/root/<task_name>`） | 调用 `spawn_agent` 的协调者 | 仅小写字母、数字、下划线；不得与仍打开的同名 agent 重复 |
+| 原生昵称 `nickname_candidates` | Codex 在候选中挑选，调用者无法指定 | 仅 ASCII 字母、数字、空格、连字符、下划线；非法值会让整个角色文件无法加载 |
+
+因此 `[ ]`、`【 】`、`.` 与中文都**不能**进入 Codex 原生昵称或 `task_name`。Crew 的做法：
+
+1. `workflow dispatch` 一次性算出并保存每个槽位的 `display_name`（`【模型名】角色名`，并行时加 `#i`）、`task_name`（如 `gpt_6_1_sol_implementer`、并行 `_1`、重派 `_r2`）与原生昵称候选；之后的输出、报告与校验只读取这些已存值。
+2. `export` 为 Codex 角色写入 `nickname_candidates`（如 `gpt-6-1-sol implementer`，并行时带序号），使原生界面名称受控。
+3. PreToolUse 对工作流角色的 `spawn_agent` 强制比对：`agent_type`、`task_name`、派发标记、模型与强度必须与存档一致；缺少标记同样拒绝并给出应使用的值。
+4. `workflow report` 的 `native_nickname_observed` 记录 Codex 实际返回的昵称，便于核对。
+
+`workflow` 之外临时创建的角色（如直接点名 `crew_tester`）不在此约束内。
 
 ## 生效范围
 

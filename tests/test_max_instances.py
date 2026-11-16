@@ -111,34 +111,34 @@ class MaxInstancesTests(unittest.TestCase):
         with self.assertRaisesRegex(core.Error, 'positive integer'):
             store.change(task, d['version'], 'dispatch', count=0)
 
-        # Dispatch 2 parallel implementers.
-        d = store.change(task, d['version'], 'dispatch', count=2)
-        en_p = present(d)
-        self.assertEqual(len(en_p['dispatch_inputs']), 2)
-        self.assertEqual([x['name'] for x in en_p['dispatch_inputs']], ['[gpt-6.1-sol]implementer#1', '[gpt-6.1-sol]implementer#2'])
-        self.assertTrue(all(x['agent_type'] == 'crew_implementer' for x in en_p['dispatch_inputs']))
-
+        # Dispatch 2 parallel implementers (in zh so frozen slot display_name uses zh).
         i18n.set_language('zh')
+        d = store.change(task, d['version'], 'dispatch', count=2)
         zh_p = present(d)
-        self.assertEqual([x['name'] for x in zh_p['dispatch_inputs']], ['[gpt-6.1-sol]实施者#1', '[gpt-6.1-sol]实施者#2'])
-        self.assertIn('子智能体命名：[gpt-6.1-sol]实施者#2\n', zh_p['dispatch_inputs'][1]['message'])
+        self.assertEqual(len(zh_p['dispatch_inputs']), 2)
+        self.assertEqual([x['name'] for x in zh_p['dispatch_inputs']], ['【gpt-6.1-sol】实施者#1', '【gpt-6.1-sol】实施者#2'])
+        self.assertEqual([x['task_name'] for x in zh_p['dispatch_inputs']], ['gpt_6_1_sol_implementer_1', 'gpt_6_1_sol_implementer_2'])
+        self.assertTrue(all(x['agent_type'] == 'crew_implementer' for x in zh_p['dispatch_inputs']))
+        self.assertIn('子智能体命名：【gpt-6.1-sol】实施者#2\n', zh_p['dispatch_inputs'][1]['message'])
 
         # Spawn worker 1 and start it BEFORE spawning worker 2 (interleaved).
         kw1 = dict(tool_name='spawn_agent', tool_use_id='call-1',
-                   tool_input={'agent_type': 'crew_implementer', 'message': en_p['dispatch_inputs'][0]['message']})
+                   tool_input={'agent_type': 'crew_implementer', 'task_name': zh_p['dispatch_inputs'][0]['task_name'],
+                               'message': zh_p['dispatch_inputs'][0]['message']})
         kw2 = dict(tool_name='spawn_agent', tool_use_id='call-2',
-                   tool_input={'agent_type': 'crew_implementer', 'message': en_p['dispatch_inputs'][1]['message']})
+                   tool_input={'agent_type': 'crew_implementer', 'task_name': zh_p['dispatch_inputs'][1]['task_name'],
+                               'message': zh_p['dispatch_inputs'][1]['message']})
         self.assertEqual(workflow_hooks.handle(dict(hook_event_name='PreToolUse', session_id='sess-p', **kw1), self.project).get('hookSpecificOutput', {}).get('permissionDecision'), None)
         workflow_hooks.handle(dict(hook_event_name='PostToolUse', session_id='sess-p', tool_response={'agent_id': 'w1'}, **kw1), self.project)
         sub1 = workflow_hooks.handle(dict(hook_event_name='SubagentStart', session_id='sess-p', agent_id='w1', agent_type='crew_implementer'), self.project)
-        self.assertIn('[gpt-6.1-sol]实施者#1', sub1['hookSpecificOutput']['additionalContext'])
+        self.assertIn('【gpt-6.1-sol】实施者#1', sub1['hookSpecificOutput']['additionalContext'])
 
         # Phase is now 'implementing'; spawning slot 2 must still be allowed!
         self.assertEqual(store.read(task)['phase'], 'implementing')
         self.assertEqual(workflow_hooks.handle(dict(hook_event_name='PreToolUse', session_id='sess-p', **kw2), self.project).get('hookSpecificOutput', {}).get('permissionDecision'), None)
         workflow_hooks.handle(dict(hook_event_name='PostToolUse', session_id='sess-p', tool_response={'agent_id': 'w2'}, **kw2), self.project)
         sub2 = workflow_hooks.handle(dict(hook_event_name='SubagentStart', session_id='sess-p', agent_id='w2', agent_type='crew_implementer'), self.project)
-        self.assertIn('[gpt-6.1-sol]实施者#2', sub2['hookSpecificOutput']['additionalContext'])
+        self.assertIn('【gpt-6.1-sol】实施者#2', sub2['hookSpecificOutput']['additionalContext'])
 
         # Both w1 and w2 may edit; unknown agent or root is denied.
         for writer in ('w1', 'w2'):
@@ -159,7 +159,7 @@ class MaxInstancesTests(unittest.TestCase):
         d = store.read(task)
         rep = report(d)
         self.assertEqual([a['agent_id'] for a in rep['assignments']], ['w1', 'w2'])
-        self.assertEqual([a['subagent_name'] for a in rep['assignments']], ['[gpt-6.1-sol]实施者#1', '[gpt-6.1-sol]实施者#2'])
+        self.assertEqual([a['subagent_name'] for a in rep['assignments']], ['【gpt-6.1-sol】实施者#1', '【gpt-6.1-sol】实施者#2'])
 
         d = store.change(task, d['version'], 'deliver', files=['a.py', 'b.py'], summary='both parts done', tests='all passed')
         self.assertEqual(d['delivery']['agent_ids'], ['w1', 'w2'])

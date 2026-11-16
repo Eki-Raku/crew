@@ -57,7 +57,7 @@
 ## 二、它具体能帮你做什么
 
 1. **给每个角色固定模型和思考强度**
-   自带协调（`coordinator`）、实现（`implementer`）、审查（`reviewer`）、研究（`researcher`）、测试（`tester`）5 个中英双语模板，也可以自己新建（比如上面的 `backend`、`architect`、`operator`）。每个角色单独设模型 ID 和思考强度，预览没问题后一键导出到 `.codex/agents/` 或 `.claude/agents/`。
+   自带协调（`coordinator`）、实现（`implementer`）、审查（`reviewer`）、研究（`researcher`）、测试（`tester`）、文档记录员（`documenter`）6 个中英双语模板，也可以自己新建（比如上面的 `backend`、`architect`、`operator`）。每个角色单独设模型 ID 和思考强度，预览没问题后一键导出到 `.codex/agents/` 或 `.claude/agents/`。
 2. **子智能体交接时不重复塞完整上下文**
    多角色协作或者新开会话接手时，最怕把前因后果再喂一遍。Crew 在本地用 SQLite 存了一份带版本号的任务状态（目标、约束、已敲定的决定、进度、下一步和验证证据）。第一次读快照，后面只用 `--since <版本号>` 读增量变化。实测跑 30 轮交接，增量读取比每轮重传完整状态能**少传约 76.3% 的状态数据（`118.9 KB → 28.2 KB`）**，并且带乐观锁，多个角色同时写也不会互相覆盖。
 3. **Codex 和 Claude Code 都能用**

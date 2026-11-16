@@ -53,7 +53,7 @@ Converted using standard [OpenAI API pricing](https://developers.openai.com/api/
 ## 2. What It Does
 
 1. **Lock models and reasoning effort per role**
-   Includes 5 bilingual templates (`coordinator`, `implementer`, `reviewer`, `researcher`, `tester`), plus custom roles (`backend`, `architect`, `operator`). Pick a model ID and reasoning effort for each role, preview the diff, and export to `.codex/agents/` or `.claude/agents/`.
+   Includes 6 bilingual templates (`coordinator`, `implementer`, `reviewer`, `researcher`, `tester`, `documenter`), plus custom roles (`backend`, `architect`, `operator`). Pick a model ID and reasoning effort for each role, preview the diff, and export to `.codex/agents/` or `.claude/agents/`.
 2. **Avoid resending full context on handoffs**
    Crew stores a small versioned task state in local SQLite (goal, constraints, decisions, progress, next steps, and evidence). Subagents read the full snapshot once and fetch only version deltas (`--since <version>`) on later turns. Across a 30-round handoff benchmark, reading deltas cuts serialized state traffic by **~76.3% (`118.9 KB → 28.2 KB`)**, with compare-and-swap versioning so parallel roles don't overwrite each other.
 3. **Works with both Codex and Claude Code**

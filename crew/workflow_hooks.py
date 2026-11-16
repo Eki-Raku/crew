@@ -5,10 +5,43 @@ import shlex
 import sys
 from pathlib import Path
 from . import core, hosts, i18n
-from .workflow import WorkflowStore, instruction
+from .workflow import WorkflowStore, instruction, slot_label, TERMINAL
 
 MARKER = re.compile(r'^\[crew-dispatch:([0-9a-f]{32})\](?:\n|$)')
 EVENTS = {'SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'SubagentStart', 'SubagentStop', 'Stop'}
+
+
+def deny(name, reason):
+    return {'hookSpecificOutput': {'hookEventName': name, 'permissionDecision': 'deny', 'permissionDecisionReason': reason}}
+
+
+def spawn_denial(data, slots, inp, token, role, tool_id):
+    """Reason to reject a spawn of a workflow role that is not the prepared dispatch, else None.
+
+    The dispatch fixed agent_type, task_name and the marker; the coordinator may not improvise any
+    of them, and omitting the marker is not a way around the check.
+    """
+    managed = {hosts.export().agent_name(data['implementer']), hosts.export().agent_name(data['reviewer'])}
+    if data['phase'] in TERMINAL or (role not in managed and not token): return None
+    free = next((s for s in slots if s['tool_use_id'] is None), None) or (slots[0] if slots else None)
+    if free is None:
+        return i18n.f('Crew blocks this spawn: no prepared dispatch exists for {agent_type}. Run workflow dispatch, then pass the returned dispatch_input to spawn_agent verbatim (agent_type, task_name, message).',
+                      agent_type=role)
+    guidance = i18n.f('Crew blocks this spawn: it must be the prepared dispatch exactly. Required: agent_type={agent_type}, task_name={task_name}, message starting with the dispatch marker, no model or reasoning_effort override. Copy dispatch_input verbatim.',
+                      agent_type=hosts.export().agent_name(free['role']), task_name=free.get('task_name') or '-')
+    matched = next((s for s in slots if token and s['token'] == token), None)
+    if not matched: return guidance
+    expected_phase = 'reviewing' if matched['stage'] == 'review' else 'implementing'
+    if (role != hosts.export().agent_name(matched['role'])
+            or data['phase'] not in ('dispatch_pending', expected_phase)
+            or not isinstance(tool_id, str) or not 0 < len(tool_id) <= 256
+            or matched['tool_use_id'] not in (None, tool_id)
+            or inp.get('model', matched['model']) != matched['model']
+            or inp.get('reasoning_effort', matched['effort']) != matched['effort']
+            or ('task_name' in inp and matched.get('task_name') and inp['task_name'] != matched['task_name'])):
+        return i18n.f('Crew blocks this spawn: it must be the prepared dispatch exactly. Required: agent_type={agent_type}, task_name={task_name}, message starting with the dispatch marker, no model or reasoning_effort override. Copy dispatch_input verbatim.',
+                      agent_type=hosts.export().agent_name(matched['role']), task_name=matched.get('task_name') or '-')
+    return None
 
 
 def handle(event, project, deadline=None):
@@ -64,19 +97,12 @@ def handle(event, project, deadline=None):
         match = MARKER.match(message) if isinstance(message, str) else None
         token = match.group(1) if match else None
         tool_id = event.get('tool_use_id')
-        if not isinstance(tool_id, str) or not 0 < len(tool_id) <= 256: return {}
         role = inp.get('agent_type')
-        if name == 'PreToolUse' and token:
-            matched = next((s for s in slots if s['token'] == token), None)
-            expected_phase = 'reviewing' if matched and matched['stage'] == 'review' else 'implementing'
-            if (not matched or role != hosts.export().agent_name(matched['role'])
-                    or data['phase'] not in ('dispatch_pending', expected_phase)
-                    or matched['tool_use_id'] not in (None, tool_id)
-                    or inp.get('model', matched['model']) != matched['model']
-                    or inp.get('reasoning_effort', matched['effort']) != matched['effort']):
-                return {'hookSpecificOutput': {'hookEventName': name, 'permissionDecision': 'deny',
-                        'permissionDecisionReason': i18n.t('Crew dispatch does not match the current assignment. Read workflow state and use its dispatch_input.')}}
-        agent_id = None
+        if name == 'PreToolUse':
+            reason = spawn_denial(data, slots, inp, token, role, tool_id)
+            if reason: return deny(name, reason)
+        if not isinstance(tool_id, str) or not 0 < len(tool_id) <= 256: return {}
+        agent_id = nickname = None
         if name == 'PostToolUse':
             response = event.get('tool_response')
             if isinstance(response, str):
@@ -85,7 +111,9 @@ def handle(event, project, deadline=None):
             if isinstance(response, dict) and not response.get('error'):
                 candidate = response.get('agent_id')
                 if isinstance(candidate, str) and 0 < len(candidate) <= 128: agent_id = candidate
-        data = store.observe(task, sid, name, token=token, tool_use_id=tool_id, agent_id=agent_id, role=role)
+                found = response.get('nickname') or response.get('agent_nickname')
+                if isinstance(found, str): nickname = found
+        data = store.observe(task, sid, name, token=token, tool_use_id=tool_id, agent_id=agent_id, role=role, nickname=nickname)
     elif name in ('SubagentStart', 'SubagentStop'):
         agent_id, role = event.get('agent_id'), event.get('agent_type')
         if not isinstance(agent_id, str) or not 0 < len(agent_id) <= 128 or not isinstance(role, str): return {}
@@ -101,10 +129,9 @@ def handle(event, project, deadline=None):
         total = len(slots)
         matched = next(((idx, s) for idx, s in enumerate(slots, 1) if s.get('agent_id') == event.get('agent_id')), None)
         if matched:
-            idx, slot = matched
-            label = hosts.subagent_name(slot['role'], slot['model'], index=idx if total > 1 else None, total=total)
+            label = slot_label(matched[1], matched[0], total)
         elif slots:
-            label = hosts.subagent_name(slots[0]['role'], slots[0]['model'])
+            label = slot_label(slots[0], 1, total)
         else:
             label = None
         prefix = (label + ' — ') if label else ''

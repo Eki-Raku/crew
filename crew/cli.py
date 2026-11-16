@@ -46,9 +46,9 @@ def parser():
     for name in ['setup', 'uninstall']:
         s = command(name); s.add_argument('--apply', action='store_true')
     s = command('enable'); s.add_argument('--scope', choices=['global', 'project'], default='project'); s.add_argument('--disabled', action='store_true')
-    s = command('role'); s.add_argument('action', choices=['list', 'show', 'create', 'update', 'delete', 'disable', 'enable']); s.add_argument('name', nargs='?')
+    s = command('role'); s.add_argument('action', choices=['list', 'show', 'spawn', 'create', 'update', 'delete', 'disable', 'enable']); s.add_argument('name', nargs='?')
     s.add_argument('--scope', choices=['global', 'project'], default='project')
-    s.add_argument('--model'); s.add_argument('--effort', choices=hosts.ALL_EFFORTS); s.add_argument('--description'); s.add_argument('--max-instances', type=int, help='Maximum parallel instances for this role (default 1)'); prompts = s.add_mutually_exclusive_group(); prompts.add_argument('--instructions'); prompts.add_argument('--instructions-file', help=i18n.t('UTF-8 prompt file; empty file clears the prompt'))
+    s.add_argument('--model'); s.add_argument('--effort', choices=hosts.ALL_EFFORTS); s.add_argument('--description'); s.add_argument('--max-instances', type=int, help='Maximum parallel instances for this role (default 1)'); s.add_argument('--count', type=int, default=1, help='Number of parallel role instances (up to role max_instances)'); prompts = s.add_mutually_exclusive_group(); prompts.add_argument('--instructions'); prompts.add_argument('--instructions-file', help=i18n.t('UTF-8 prompt file; empty file clears the prompt'))
     s.add_argument('--apply', action='store_true', help='Confirm delete (reveals inherited global role); disable is usually safer')
     s = command('init'); s.add_argument('--scope', choices=['global', 'project'], default='project'); s.add_argument('--answer', help='JSON value answering the current step'); s.add_argument('--step'); s.add_argument('--revision', type=int); s.add_argument('--apply', action='store_true'); s.add_argument('--confirm-token'); s.add_argument('--reset', action='store_true'); s.add_argument('--models-file', help='JSON array of model IDs supplied by the host or user'); s.add_argument('--interactive', action='store_true')
     s = command('migrate'); s.add_argument('--scope', choices=['global', 'project', 'all'], default='all'); s.add_argument('--apply', action='store_true')
@@ -77,6 +77,8 @@ def run(args):
         if args.action == 'show':
             if args.name not in roles: raise c.Error('Role not found')
             return roles[args.name]
+        if args.action == 'spawn':
+            return c.spawn_spec(project, args.name, count=args.count)
         if args.action == 'delete' and not args.apply: raise c.Error('Use --apply to delete; inherited global role may reappear. Use disable to mask it.')
         instructions = Path(args.instructions_file).expanduser().read_text(encoding='utf-8') if args.instructions_file is not None else args.instructions
         description, copied = args.description, None

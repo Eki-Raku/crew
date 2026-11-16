@@ -201,8 +201,16 @@ class WorkflowStore:
         if count > limit:
             raise core.Error(f'Requested {count} instances for role {role}, exceeding max_instances={limit}')
         d['lifecycle'] = []
+        # The names are fixed here, once, and stored. Every later output and the PreToolUse gate read
+        # these stored values; nothing downstream recomputes or lets the coordinator choose a name.
+        seq = d.get('dispatch_seq', 0) + 1
+        d['dispatch_seq'] = seq
+        nicknames = hosts.native_nicknames(role, configured['model'], configured.get('max_instances', 1))
         slots = [dict(token=uuid.uuid4().hex, slot=idx, stage=stage, role=role, model=configured['model'],
-                      effort=configured['effort'], agent_id=None, tool_use_id=None, started=False, stopped=False)
+                      effort=configured['effort'], agent_id=None, tool_use_id=None, started=False, stopped=False,
+                      display_name=hosts.subagent_name(role, configured['model'], index=idx if count > 1 else None, total=count),
+                      task_name=hosts.task_name(role, configured['model'], index=idx if count > 1 else None, seq=seq),
+                      native_nicknames=nicknames, native_nickname=None)
                  for idx in range(1, count + 1)]
         d.update(attempt=slots[0], attempts=slots, phase='dispatch_pending')
         if stage == 'implementation':
@@ -235,6 +243,7 @@ class WorkflowStore:
         first = slots[0]
         d['delivery'] = dict(agent_id=first['agent_id'], role=first['role'], configured_model=first['model'], configured_effort=first['effort'], files=files, summary=text(a['summary'], 'summary'), tests=text(a['tests'], 'tests'))
         if len(slots) > 1: d['delivery']['agent_ids'] = [s['agent_id'] for s in slots]
+        d['delivery']['subagent_names'] = [slot_label(s, i, len(slots)) for i, s in enumerate(slots, 1)]
         if unlisted: d['delivery']['unlisted_changes'] = unlisted
         d.update(phase='needs_review', attempt=None, attempts=[], review=None)
 
@@ -248,6 +257,7 @@ class WorkflowStore:
         first = slots[0]
         d['review'] = dict(agent_id=first['agent_id'], role=first['role'], configured_model=first['model'], configured_effort=first['effort'], files=d['delivery']['files'], verdict=a['verdict'], summary=text(a['summary'], 'summary'))
         if len(slots) > 1: d['review']['agent_ids'] = [s['agent_id'] for s in slots]
+        d['review']['subagent_names'] = [slot_label(s, i, len(slots)) for i, s in enumerate(slots, 1)]
         d.update(phase='ready' if a['verdict'] == 'pass' else 'changes_needed', attempt=None, attempts=[])
 
     def _finish(self, d, a):
@@ -299,7 +309,7 @@ class WorkflowStore:
         if not d['delivery'] or fingerprint(self.project, list(d['delivery']['files'])) != d['delivery']['files']:
             raise core.Error('Artifacts changed; retry implementation and review the new delivery')
 
-    def observe(self, task, session, event, *, token=None, tool_use_id=None, agent_id=None, role=None):
+    def observe(self, task, session, event, *, token=None, tool_use_id=None, agent_id=None, role=None, nickname=None):
         """Called only by the hook adapter. Unknown/out-of-order receipts cannot advance a stage."""
         with self.context._transaction(write=True) as conn:
             d = self._get(conn, task)
@@ -318,12 +328,23 @@ class WorkflowStore:
                     if slot['stage'] == 'review' and agent_id in d['implementer_ids']: return d
                     if any(s['agent_id'] == agent_id for s in slots): return d
                     slot['agent_id'] = agent_id
+                    # Evidence only: what Codex actually called the agent in its own UI.
+                    if isinstance(nickname, str) and nickname.strip(): slot['native_nickname'] = nickname.strip()[:120]
                     if slot['stage'] == 'implementation' and agent_id not in d['implementer_ids']:
                         d['implementer_ids'].append(agent_id)
             elif event in ('SubagentStart', 'SubagentStop') and agent_id and role == expected_role:
                 receipt = [event, agent_id, role]
                 if receipt not in d['lifecycle']:
                     d['lifecycle'] = (d['lifecycle'] + [receipt])[-64:]
+                # Codex multi_agent_v2 spawns without PreToolUse/PostToolUse hooks and returns only
+                # task_name. When a dispatched slot has no tool_use_id yet, bind SubagentStart here
+                # while keeping review independence and v1 Pre/PostToolUse precedence intact.
+                if event == 'SubagentStart' and not any(s['agent_id'] == agent_id for s in slots):
+                    slot = next((s for s in slots if s['tool_use_id'] is None and s['agent_id'] is None), None)
+                    if slot and not (slot['stage'] == 'review' and agent_id in d['implementer_ids']):
+                        slot['agent_id'] = agent_id
+                        if slot['stage'] == 'implementation' and agent_id not in d['implementer_ids']:
+                            d['implementer_ids'].append(agent_id)
             for slot in slots:
                 if slot['agent_id']:
                     for observed, observed_id, observed_role in d['lifecycle']:
@@ -355,6 +376,11 @@ class WorkflowStore:
             return instruction(dict(d, task_id=task, version=version))
 
 
+def slot_label(slot, index=None, total=1):
+    """The stored display name of a dispatch slot (records without one fall back to the computed form)."""
+    return slot.get('display_name') or hosts.subagent_name(slot['role'], slot['model'], index=index if total > 1 else None, total=total)
+
+
 def instruction(d):
     next_step = {'awaiting_assignment': 'dispatch implementation', 'changes_needed': 'dispatch implementation fixes',
                  'dispatch_pending': 'use the prepared spawn marker; wait for host observations',
@@ -364,10 +390,8 @@ def instruction(d):
     open_resources = sum(r['status'] == 'open' for r in d.get('resources', {}).values())
     cleanup = (' 待处理任务资源：' + str(open_resources) + '。' if i18n.LANG == 'zh' else ' Open task resources: ' + str(open_resources) + '.') if open_resources and d['phase'] not in {'blocked', 'cancelled'} else ''
     slots = d.get('attempts') or ([d['attempt']] if d.get('attempt') else [])
-    if len(slots) > 1:
-        assigned = ', '.join(hosts.subagent_name(s['role'], s['model'], index=idx, total=len(slots)) for idx, s in enumerate(slots, 1))
-    elif slots:
-        assigned = hosts.subagent_name(slots[0]['role'], slots[0]['model'])
+    if slots:
+        assigned = ', '.join(slot_label(s, idx, len(slots)) for idx, s in enumerate(slots, 1))
     else:
         assigned = None
     if i18n.LANG == 'zh':

@@ -351,4 +351,27 @@ class WorkflowTests(unittest.TestCase):
         try:self.assertEqual(workflow_hooks.handle({'hook_event_name':'Stop','session_id':'parent'},self.project),{})
         finally:hosts.select('codex')
 
+    def test_v2_subagent_start_binds_dispatched_slot_without_spawn_tool_hooks(self):
+        # Codex multi_agent_v2 skips PreToolUse/PostToolUse for spawn_agent and emits SubagentStart/Stop.
+        self.change('dispatch')
+        start = self.event('SubagentStart', agent_id='v2-impl', agent_type='crew_implementer')
+        self.assertIn('implementer', start['hookSpecificOutput']['additionalContext'])
+        self.assertEqual(self.d['phase'], 'implementing')
+        self.assertEqual(self.d['attempt']['agent_id'], 'v2-impl')
+        # Assigned v2 implementer may patch; root, rogue agent, and extra undispatched worker are denied.
+        self.assertEqual(self.event('PreToolUse', tool_name='apply_patch', agent_id='v2-impl', agent_type='crew_implementer'), {})
+        self.assertEqual(self.event('PreToolUse', tool_name='apply_patch')['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.event('SubagentStart', agent_id='rogue-impl', agent_type='crew_implementer')
+        self.assertEqual(self.event('PreToolUse', tool_name='apply_patch', agent_id='rogue-impl', agent_type='crew_implementer')['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.event('SubagentStop', agent_id='v2-impl', agent_type='crew_implementer')
+        self.deliver()
+        self.change('dispatch')
+        # Same implementer cannot sneak into review via v2 SubagentStart either.
+        self.event('SubagentStart', agent_id='v2-impl', agent_type='crew_reviewer')
+        self.assertIsNone(self.d['attempt']['agent_id'])
+        self.event('SubagentStart', agent_id='v2-rev', agent_type='crew_reviewer')
+        self.event('SubagentStop', agent_id='v2-rev', agent_type='crew_reviewer')
+        self.change('review', verdict='pass', summary='verified')
+        self.assertEqual(self.change('finish')['phase'], 'completed')
+
 if __name__=='__main__':unittest.main()

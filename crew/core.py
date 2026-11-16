@@ -408,6 +408,7 @@ def preflight(project):
             'stale_exports': sorted(stale), 'next': 'Preview export, then export --apply to synchronize project role files.' if drift else None,
             'project': str(project_root(project)), 'roles': active,
             'subagent_names': {name: hosts.subagent_name(name, cfg['roles'][name]['model']) for name in active},
+            'task_names': {name: hosts.task_name(name, cfg['roles'][name]['model']) for name in active},
             'max_instances': {name: cfg['roles'][name]['max_instances'] for name in active},
             'roles_for_other_hosts_only': other_host_roles(project),
             'questions': [] if active or not cfg['enabled'] else questions(),
@@ -469,6 +470,32 @@ def export_agents(project, scope='project', apply=False, clean=False):
     if apply and first and expected and host == 'claude':
         result['note'] = 'This agents directory is new. Claude Code only watches agent directories that existed when the session started; restart the session to load these roles.'
     return result
+
+
+def spawn_spec(project, name, count=1):
+    """Return fixed, pre-computed spawn naming variables for a configured role."""
+    roles = effective(project)['roles']
+    role = roles.get(name)
+    if not role or role.get('disabled'):
+        raise Error('Role not found or disabled')
+    limit = role.get('max_instances', 1)
+    if type(count) is not int or count < 1:
+        raise Error('Dispatch count must be a positive integer')
+    if count > limit:
+        raise Error(f'Requested {count} instances for role {name}, exceeding max_instances={limit}')
+    nicknames = hosts.native_nicknames(name, role['model'], limit)
+    instances = [{
+        'slot': i,
+        'agent_type': hosts.export().agent_name(name),
+        'task_name': hosts.task_name(name, role['model'], index=i if count > 1 else None),
+        'name': hosts.subagent_name(name, role['model'], index=i if count > 1 else None, total=count),
+        'native_nickname_candidates': nicknames,
+        'model': role['model'],
+        'reasoning_effort': role['effort'],
+    } for i in range(1, count + 1)]
+    spec = dict(instances[0], role=name, max_instances=limit, host=hosts.CURRENT)
+    if count > 1: spec['instances'] = instances
+    return spec
 
 
 def install_presets(scope, project, names, model, effort, language=None, max_instances=1):

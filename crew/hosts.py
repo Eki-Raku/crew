@@ -66,6 +66,7 @@ ROLE_LABELS = {
         'reviewer': '审查者',
         'researcher': '研究者',
         'tester': '测试者',
+        'documenter': '文档记录员',
     },
     'en': {
         'coordinator': 'coordinator',
@@ -73,6 +74,7 @@ ROLE_LABELS = {
         'reviewer': 'reviewer',
         'researcher': 'researcher',
         'tester': 'tester',
+        'documenter': 'documenter',
     },
 }
 
@@ -83,12 +85,49 @@ def role_label(role_id, language=None):
     return ROLE_LABELS[lang].get(role_id, role_id)
 
 
+NAME_OPEN, NAME_CLOSE = '【', '】'  # Crew-side canonical display brackets (Codex rejects ASCII brackets in native names).
+
+
 def subagent_name(role_id, model, language=None, index=None, total=1):
-    """Canonical display name for dispatched subagents: ``[model]role`` (or ``#n`` when parallel)."""
-    base = f'[{model}]{role_label(role_id, language)}'
+    """Canonical Crew display name: ``【model】role`` (``#n`` appended when parallel)."""
+    base = f'{NAME_OPEN}{model}{NAME_CLOSE}{role_label(role_id, language)}'
     if total and total > 1 and index is not None:
         return f'{base}#{index}'
     return base
+
+
+def _slug(text, limit=40):
+    slug = re.sub(r'[^a-z0-9]+', '_', str(text).lower()).strip('_')[:limit].strip('_')
+    return slug or 'x'
+
+
+def task_name(role_id, model, index=None, seq=1):
+    """Deterministic Codex ``task_name`` (spawn_agent accepts only lowercase letters, digits, underscores).
+
+    ``seq`` > 1 appends ``_r<seq>`` so a later dispatch never collides with an agent
+    from an earlier dispatch that is still open (Codex rejects duplicate agent paths).
+    """
+    name = _slug(model) + '_' + _slug(role_id)
+    if index is not None: name += f'_{int(index)}'
+    if seq and seq > 1: name += f'_r{int(seq)}'
+    return name
+
+
+NICKNAME_RULE = re.compile(r'^[A-Za-z0-9 _-]+$')  # Codex 0.169.0: ASCII letters, digits, spaces, hyphens, underscores
+
+
+def native_nicknames(role_id, model, max_instances=1):
+    """Native Codex nickname_candidates for a role, or [] when no valid ASCII form exists.
+
+    Codex picks one candidate when it spawns the role and offers no way for the caller to choose,
+    so a role allowing ``n`` parallel instances gets ``n`` numbered candidates.
+    """
+    model_part = re.sub(r'-{2,}', '-', re.sub(r'[^A-Za-z0-9 _-]+', '-', str(model))).strip(' -')
+    role_part = re.sub(r'[^A-Za-z0-9_-]+', '-', str(role_id)).strip(' -')
+    if not model_part or not role_part: return []
+    base = f'{model_part} {role_part}'
+    names = [base] if not max_instances or max_instances <= 1 else [f'{base} {i}' for i in range(1, max_instances + 1)]
+    return names if all(NICKNAME_RULE.match(n) for n in names) and len(set(names)) == len(names) else []
 
 
 def home(host=None):
@@ -183,8 +222,12 @@ class CodexExport:
     def render(cls, name, role):
         text = HEADER + '\n'
         for key, value in [('name', cls.agent_name(name)), ('description', role['description']), ('model', role['model']),
-                           ('model_reasoning_effort', role['effort']), ('developer_instructions', role['instructions'])]:
+                           ('model_reasoning_effort', role['effort'])]:
             text += key + ' = ' + _quote(value) + '\n'
+        nicknames = native_nicknames(name, role['model'], role.get('max_instances', 1))
+        # ASCII-only by Codex's own validation; an invalid list would make the whole role file unloadable.
+        if nicknames: text += 'nickname_candidates = [' + ', '.join(_quote(n) for n in nicknames) + ']\n'
+        text += 'developer_instructions = ' + _quote(role['instructions']) + '\n'
         tomllib.loads(text)  # Never report a successful export of invalid TOML.
         return text
 
@@ -197,7 +240,8 @@ class CodexExport:
     def in_sync(cls, text, name, role):
         try: obj = tomllib.loads(text)
         except ValueError: return False
-        return all(obj.get(k) == v for k, v in [('name', cls.agent_name(name)), ('model', role['model']),
+        expected = native_nicknames(name, role['model'], role.get('max_instances', 1)) or None
+        return obj.get('nickname_candidates') == expected and all(obj.get(k) == v for k, v in [('name', cls.agent_name(name)), ('model', role['model']),
                    ('model_reasoning_effort', role['effort']), ('description', role['description']),
                    ('developer_instructions', role['instructions'])])
 

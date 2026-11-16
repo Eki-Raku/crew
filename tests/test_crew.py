@@ -145,7 +145,8 @@ class Tests(unittest.TestCase):
     def test_presets_available_without_config(self):
         result = self.cli('presets', 'list')
         presets = json.loads(result.stdout)['presets']
-        self.assertEqual(len(presets), 5)
+        self.assertEqual(len(presets), 6)
+        self.assertIn('documenter', presets)
         self.assertTrue(all(v['instructions'].strip() for v in presets.values()))
         self.assertFalse(c.path('project', self.project).exists())
     def test_presets_install_and_upgrade_preserve(self):
@@ -153,7 +154,7 @@ class Tests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         c.role_write('project', self.project, 'coordinator', {'instructions': 'My custom prompt'}, 'update')
         result = self.cli('presets', 'install', '--model', 'different-model', '--effort', 'high')
-        self.assertEqual(len(json.loads(result.stdout)['skipped_existing']), 5)
+        self.assertEqual(len(json.loads(result.stdout)['skipped_existing']), 6)
         role = c.effective(self.project)['roles']['coordinator']
         self.assertEqual(role['instructions'], 'My custom prompt'); self.assertEqual(role['model'], 'example-model')
     def test_presets_preserve_inherited(self):

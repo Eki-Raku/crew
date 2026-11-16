@@ -1,7 +1,7 @@
 """CLI/TUI for explicit engineering workflows; no host process is launched."""
 from . import core, hosts, i18n
 from .context_cli import required
-from .workflow import WorkflowStore, instruction
+from .workflow import WorkflowStore, instruction, slot_label
 
 
 def register(command):
@@ -29,8 +29,12 @@ def present(data):
     if slots:
         total = len(slots)
         inputs = [{
+            # Pass agent_type, task_name and message to spawn_agent exactly as given. The PreToolUse gate
+            # rejects any other value; the names are fixed by the dispatch, not chosen by the caller.
             'agent_type': hosts.export().agent_name(slot['role']),
-            'name': hosts.subagent_name(slot['role'], slot['model'], index=idx if total > 1 else None, total=total),
+            'task_name': slot.get('task_name'),
+            'name': slot_label(slot, idx, total),
+            'native_nickname_candidates': slot.get('native_nicknames') or [],
             'model': slot['model'],
             'reasoning_effort': slot['effort'],
             'message': dispatch_message(data, slot=slot, index=idx if total > 1 else None, total=total),
@@ -54,7 +58,9 @@ def report(data):
         assignments = []
         for idx, slot in enumerate(slots, 1):
             item = {k: slot[k] for k in ('stage', 'role', 'agent_id', 'started', 'stopped')}
-            item.update(subagent_name=hosts.subagent_name(slot['role'], slot['model'], index=idx if total > 1 else None, total=total),
+            item.update(subagent_name=slot_label(slot, idx, total), task_name=slot.get('task_name'),
+                        native_nickname_candidates=slot.get('native_nicknames') or [],
+                        native_nickname_observed=slot.get('native_nickname'),
                         configured_model=slot['model'], configured_effort=slot['effort'])
             assignments.append(item)
         result['assignment'] = assignments[0]
@@ -63,7 +69,8 @@ def report(data):
     for name in ('delivery', 'review'):
         if data.get(name):
             result[name] = {k: v for k,v in data[name].items() if k != 'files'}
-            result[name]['subagent_name'] = hosts.subagent_name(data[name]['role'], data[name]['configured_model'])
+            names = data[name].get('subagent_names')
+            result[name]['subagent_name'] = names[0] if names else hosts.subagent_name(data[name]['role'], data[name]['configured_model'])
             result[name]['artifact_paths'] = list(data[name]['files'])
     result['resources'] = [{'id':key, **value} for key,value in data.get('resources', {}).items()]
     return result
@@ -72,7 +79,7 @@ def report(data):
 def dispatch_message(data, slot=None, index=None, total=1):
     import json
     attempt = slot or data['attempt']
-    name = hosts.subagent_name(attempt['role'], attempt['model'], index=index, total=total)
+    name = slot_label(attempt, index, total)
     header = '[crew-dispatch:' + attempt['token'] + ']\n'
     header += (('子智能体命名：' + name + '\n登记任务创建的进程、页签或临时产物；退出前用原工具清理，汇报处置证据或用户要求保留的说明。\n')
                if i18n.LANG == 'zh' else
