@@ -24,7 +24,8 @@ def handle(event, project, *, deadline=None):
     if name not in INJECT:
         # SessionEnd also means shutdown/idle. Compaction/end are diagnostic only.
         return {}
-    if not c.effective(project)['enabled']: return {}
+    cfg = c.effective(project)
+    if not cfg['enabled']: return {}
     sid = event.get('session_id')
     if not isinstance(sid, str) or not sid.strip() or len(sid) > 256:
         return {'hookSpecificOutput': {'hookEventName': name, 'additionalContext': 'Crew: session identity unavailable; shared context was not associated. Use ' + context_command(project, 'open', '--session', '<session-id>') + ' with an explicit session ID.'}}
@@ -44,6 +45,12 @@ def handle(event, project, *, deadline=None):
         # SessionStart (including compact/resume) receives a bounded orientation.
         packet = {'host': provider, 'task_id': opened['task_id'], 'version': opened['version'],
                   'reset': opened.get('reset', False), 'created': opened.get('created', False)}
+        if name == 'SubagentStart' and isinstance(event.get('agent_type'), str):
+            agent_type = event['agent_type']
+            matched = next(((rid, role) for rid, role in cfg['roles'].items()
+                            if not role.get('disabled') and hosts.export().agent_name(rid) == agent_type), None)
+            if matched:
+                packet['subagent_name'] = hosts.subagent_name(matched[0], matched[1]['model'])
         state = opened.get('state', {})
         if name == 'SessionStart' or packet['reset'] or packet['created']:
             packet['orientation'] = {k: state[k] for k in ('summary', 'goal', 'next', 'blockers') if k in state}

@@ -14,16 +14,30 @@ def register(command):
     p.add_argument('--resource-id'); p.add_argument('--kind', choices=['process', 'tab', 'app', 'temporary', 'other'])
     p.add_argument('--locator'); p.add_argument('--owner'); p.add_argument('--purpose'); p.add_argument('--creation-evidence'); p.add_argument('--evidence')
     p.add_argument('--verdict', choices=['pass', 'changes']); p.add_argument('--reason')
+    p.add_argument('--count', type=int, help='Number of parallel role instances to dispatch (up to role max_instances)')
+
+
+def _slots(data):
+    if data.get('attempts'): return data['attempts']
+    return [data['attempt']] if data.get('attempt') else []
 
 
 def present(data):
     result = dict(data, next=instruction(data), edit_protection=data.get('edit_policy', 'stage'), verification='local_hook_observations',
                   host_enforcement='not_verified')
-    attempt = data.get('attempt')
-    if attempt:
-        result['dispatch_input'] = {'agent_type': hosts.export().agent_name(attempt['role']),
-                                    'model': attempt['model'], 'reasoning_effort': attempt['effort'],
-                                    'message': dispatch_message(data)}
+    slots = _slots(data)
+    if slots:
+        total = len(slots)
+        inputs = [{
+            'agent_type': hosts.export().agent_name(slot['role']),
+            'name': hosts.subagent_name(slot['role'], slot['model'], index=idx if total > 1 else None, total=total),
+            'model': slot['model'],
+            'reasoning_effort': slot['effort'],
+            'message': dispatch_message(data, slot=slot, index=idx if total > 1 else None, total=total),
+        } for idx, slot in enumerate(slots, 1)]
+        result['dispatch_input'] = inputs[0]
+        if total > 1:
+            result['dispatch_inputs'] = inputs
     return result
 
 
@@ -34,23 +48,35 @@ def report(data):
                   host_enforcement='not_verified', evidence={'dispatch': 'local_hook_observations', 'tests_and_cleanup': 'reported'})
     if data.get('reason'): result['waiting_or_cancel_reason'] = data['reason']
     if data.get('resume_evidence'): result['resume_evidence'] = data['resume_evidence']
-    attempt = data.get('attempt')
-    if attempt:
-        result['assignment'] = {k: attempt[k] for k in ('stage', 'role', 'agent_id', 'started', 'stopped')}
-        result['assignment'].update(configured_model=attempt['model'], configured_effort=attempt['effort'])
+    slots = _slots(data)
+    if slots:
+        total = len(slots)
+        assignments = []
+        for idx, slot in enumerate(slots, 1):
+            item = {k: slot[k] for k in ('stage', 'role', 'agent_id', 'started', 'stopped')}
+            item.update(subagent_name=hosts.subagent_name(slot['role'], slot['model'], index=idx if total > 1 else None, total=total),
+                        configured_model=slot['model'], configured_effort=slot['effort'])
+            assignments.append(item)
+        result['assignment'] = assignments[0]
+        if total > 1:
+            result['assignments'] = assignments
     for name in ('delivery', 'review'):
         if data.get(name):
             result[name] = {k: v for k,v in data[name].items() if k != 'files'}
+            result[name]['subagent_name'] = hosts.subagent_name(data[name]['role'], data[name]['configured_model'])
             result[name]['artifact_paths'] = list(data[name]['files'])
     result['resources'] = [{'id':key, **value} for key,value in data.get('resources', {}).items()]
     return result
 
 
-def dispatch_message(data):
+def dispatch_message(data, slot=None, index=None, total=1):
     import json
-    attempt = data['attempt']
+    attempt = slot or data['attempt']
+    name = hosts.subagent_name(attempt['role'], attempt['model'], index=index, total=total)
     header = '[crew-dispatch:' + attempt['token'] + ']\n'
-    header += ('登记任务创建的进程、页签或临时产物；退出前用原工具清理，汇报处置证据或用户要求保留的说明。\n' if i18n.LANG == 'zh' else 'Record task-created processes, tabs or temporary artifacts; clean them up with their original tools and report evidence or the user instruction to retain them.\n')
+    header += (('子智能体命名：' + name + '\n登记任务创建的进程、页签或临时产物；退出前用原工具清理，汇报处置证据或用户要求保留的说明。\n')
+               if i18n.LANG == 'zh' else
+               ('Subagent name: ' + name + '\nRecord task-created processes, tabs or temporary artifacts; clean them up with their original tools and report evidence or the user instruction to retain them.\n'))
     if i18n.LANG == 'zh':
         if attempt['stage'] == 'review':
             return header + '独立审查这份交付。检查列出的文件、验收要求和测试证据，返回 pass 或 changes、具体发现与验证空白。\n目标：' + data['goal'] + '\n验收：' + data['acceptance'] + '\n交付：' + json.dumps(data['delivery'], ensure_ascii=False) + '\n待核验资源：' + json.dumps(data.get('resources', {}), ensure_ascii=False)
@@ -64,6 +90,8 @@ def run(args, project):
     if hosts.CURRENT != 'codex': raise core.Error('Engineering workflow currently requires Codex hooks')
     if args.edit_policy is not None and args.action not in ('start', 'next'):
         raise core.Error('Edit policy can be selected only when starting a workflow cycle')
+    if args.count is not None and args.action != 'dispatch':
+        raise core.Error('--count can only be used with dispatch')
     store = WorkflowStore(project)
     if args.action == 'start':
         required(args, 'session', 'goal', 'implementer', 'reviewer', 'acceptance')
@@ -80,6 +108,7 @@ def run(args, project):
     required(args, *fields)
     values = {f: getattr(args, f) for f in fields}
     if args.action == 'next' and args.edit_policy is not None: values['edit_policy'] = args.edit_policy
+    if args.action == 'dispatch' and args.count is not None: values['count'] = args.count
     return present(store.change(args.task, args.expected_version, args.action, **values))
 
 
@@ -103,6 +132,8 @@ def menu(project, ask, output):
         if action == 'next':
             args['goal'] = ask('Goal'); args['acceptance'] = ask('Acceptance criteria')
             args['edit_policy'] = ask('Edit policy: identity/stage', data.get('edit_policy', 'stage'))
+        if action == 'dispatch':
+            args['count'] = int(ask('Parallel instance count', '1'))
         if action == 'resource-add':
             args.update(kind=ask('Resource kind: process/tab/app/temporary/other'), locator=ask('Resource locator'), owner=ask('Resource owner'), purpose=ask('Resource purpose'), creation_evidence=ask('Resource creation evidence'))
         if action in ('resource-release', 'resource-retain'):

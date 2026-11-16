@@ -37,18 +37,19 @@ def handle(event, project, deadline=None):
             return {'hookSpecificOutput': {'hookEventName': name, 'additionalContext': guidance}}
         return {}
     task = data['task_id']
+    slots = data.get('attempts') or ([data['attempt']] if data.get('attempt') else [])
     if name == 'PreToolUse' and event.get('tool_name') == 'apply_patch':
         # New Codex builds identify child callers. Missing identity can also mean
         # an older client, so reject an unverified writer without naming its role.
         reason = None
-        attempt = data.get('attempt')
-        if data['phase'] != 'implementing' or not attempt or not attempt['started'] or attempt['stopped']:
+        active = [s for s in slots if s['started'] and not s['stopped']]
+        if data['phase'] != 'implementing' or not active:
             reason = instruction(data) + i18n.t(' Start delegated implementation before editing.')
         else:
             writer = event.get('agent_id')
             writer_role = event.get('agent_type')
             if writer is not None:
-                if writer != attempt['agent_id'] or writer_role != hosts.export().agent_name(attempt['role']):
+                if not any(writer == s['agent_id'] and writer_role == hosts.export().agent_name(s['role']) for s in active):
                     reason = i18n.t('This edit is not from the assigned implementation agent. Delegate the change to that agent.')
             elif data.get('edit_policy', 'stage') == 'identity':
                 reason = i18n.t('Crew cannot verify this edit caller. Use the assigned implementation agent on a Codex build exposing PreToolUse agent_id and agent_type. Older clients can explicitly select stage-only compatibility for a new workflow cycle.')
@@ -65,13 +66,14 @@ def handle(event, project, deadline=None):
         tool_id = event.get('tool_use_id')
         if not isinstance(tool_id, str) or not 0 < len(tool_id) <= 256: return {}
         role = inp.get('agent_type')
-        attempt = data['attempt']
         if name == 'PreToolUse' and token:
-            if (not attempt or token != attempt['token'] or role != hosts.export().agent_name(attempt['role'])
-                    or data['phase'] != 'dispatch_pending'
-                    or attempt['tool_use_id'] not in (None, tool_id)
-                    or inp.get('model', attempt['model']) != attempt['model']
-                    or inp.get('reasoning_effort', attempt['effort']) != attempt['effort']):
+            matched = next((s for s in slots if s['token'] == token), None)
+            expected_phase = 'reviewing' if matched and matched['stage'] == 'review' else 'implementing'
+            if (not matched or role != hosts.export().agent_name(matched['role'])
+                    or data['phase'] not in ('dispatch_pending', expected_phase)
+                    or matched['tool_use_id'] not in (None, tool_id)
+                    or inp.get('model', matched['model']) != matched['model']
+                    or inp.get('reasoning_effort', matched['effort']) != matched['effort']):
                 return {'hookSpecificOutput': {'hookEventName': name, 'permissionDecision': 'deny',
                         'permissionDecisionReason': i18n.t('Crew dispatch does not match the current assignment. Read workflow state and use its dispatch_input.')}}
         agent_id = None
@@ -95,6 +97,17 @@ def handle(event, project, deadline=None):
         return {'decision': 'block', 'reason': reason + i18n.t(' If waiting on approval or external work, pause with a reason.')} if reason else {}
     # Short instructions at actual boundaries, never full shared-state repetition.
     if name == 'SubagentStart':
-        info = i18n.t('Crew worker: complete your assigned stage and report files, tests and findings. Coordinator owns workflow transitions.')
+        slots = data.get('attempts') or ([data['attempt']] if data.get('attempt') else [])
+        total = len(slots)
+        matched = next(((idx, s) for idx, s in enumerate(slots, 1) if s.get('agent_id') == event.get('agent_id')), None)
+        if matched:
+            idx, slot = matched
+            label = hosts.subagent_name(slot['role'], slot['model'], index=idx if total > 1 else None, total=total)
+        elif slots:
+            label = hosts.subagent_name(slots[0]['role'], slots[0]['model'])
+        else:
+            label = None
+        prefix = (label + ' — ') if label else ''
+        info = prefix + i18n.t('Crew worker: complete your assigned stage and report files, tests and findings. Coordinator owns workflow transitions.')
     else: info = instruction(data)
     return {'hookSpecificOutput': {'hookEventName': name, 'additionalContext': info}}

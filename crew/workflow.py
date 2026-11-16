@@ -125,7 +125,7 @@ class WorkflowStore:
             if conn.execute('SELECT 1 FROM workflows WHERE task_id=?', (task,)).fetchone():
                 raise core.Error('Workflow already exists; read it before continuing')
             data = dict(session=session, edit_policy=edit_policy, goal=goal, acceptance=acceptance or goal, implementer=implementer, reviewer=reviewer,
-                        phase='awaiting_assignment', attempt=None, delivery=None, review=None, resources={},
+                        phase='awaiting_assignment', attempt=None, attempts=[], delivery=None, review=None, resources={},
                         implementer_ids=[], correction=None, observed_events=[], lifecycle=[])
             conn.execute('INSERT INTO workflows VALUES(?,1,?)', (task, json.dumps(data)))
         return self.read(task)
@@ -165,7 +165,7 @@ class WorkflowStore:
         # written before edit_policy existed, which were stage-only by definition.
         policy = a.get('edit_policy') or d.get('edit_policy', 'stage')
         if policy not in ('identity', 'stage'): raise core.Error('Invalid edit policy')
-        d.update(edit_policy=policy, goal=text(a['goal'], 'goal'), acceptance=text(a.get('acceptance') or a['goal'], 'acceptance'), phase='awaiting_assignment', attempt=None,
+        d.update(edit_policy=policy, goal=text(a['goal'], 'goal'), acceptance=text(a.get('acceptance') or a['goal'], 'acceptance'), phase='awaiting_assignment', attempt=None, attempts=[],
                  delivery=None, review=None, resources={}, implementer_ids=[], correction=None, lifecycle=[], observed_events=[])
         for key in ('reason', 'resume_phase', 'previous_review', 'resume_evidence', 'retry_reason'): d.pop(key, None)
 
@@ -182,6 +182,11 @@ class WorkflowStore:
         d['resume_evidence'] = text(a.get('reason'), 'resume evidence')
         d['phase'] = d.pop('resume_phase'); d.pop('reason', None)
 
+    @staticmethod
+    def _attempts(d):
+        if d.get('attempts'): return d['attempts']
+        return [d['attempt']] if d.get('attempt') else []
+
     def _dispatch(self, d, a):
         if d['phase'] not in ('awaiting_assignment', 'needs_review', 'changes_needed'):
             raise core.Error('This stage already has an assignment; wait or retry explicitly')
@@ -189,21 +194,29 @@ class WorkflowStore:
         role = d['reviewer' if stage == 'review' else 'implementer']
         configured = core.effective(self.project)['roles'].get(role)
         if not configured or configured.get('disabled'): raise core.Error('Role is no longer enabled')
-        token = uuid.uuid4().hex
+        count = a.get('count', 1)
+        limit = configured.get('max_instances', 1)
+        if type(count) is not int or count < 1:
+            raise core.Error('Dispatch count must be a positive integer')
+        if count > limit:
+            raise core.Error(f'Requested {count} instances for role {role}, exceeding max_instances={limit}')
         d['lifecycle'] = []
-        d.update(attempt=dict(token=token, stage=stage, role=role, model=configured['model'], effort=configured['effort'], agent_id=None, tool_use_id=None,
-                              started=False, stopped=False), phase='dispatch_pending')
+        slots = [dict(token=uuid.uuid4().hex, slot=idx, stage=stage, role=role, model=configured['model'],
+                      effort=configured['effort'], agent_id=None, tool_use_id=None, started=False, stopped=False)
+                 for idx in range(1, count + 1)]
+        d.update(attempt=slots[0], attempts=slots, phase='dispatch_pending')
         if stage == 'implementation':
             d['previous_review'] = d.get('review') or d.get('previous_review')
             d.update(delivery=None, review=None)
 
     def _retry(self, d, a):
         phase = d['phase']
-        if not d['attempt'] and phase not in ('ready', 'needs_review', 'changes_needed'):
+        slots = self._attempts(d)
+        if not slots and phase not in ('ready', 'needs_review', 'changes_needed'):
             raise core.Error('No assignment to retry')
         text(a['reason'], 'reason')
         # A ready/delivered artifact can be explicitly invalidated and rebuilt.
-        d['phase'] = 'needs_review' if d['attempt'] and d['attempt']['stage'] == 'review' else 'changes_needed'
+        d['phase'] = 'needs_review' if slots and slots[0]['stage'] == 'review' else 'changes_needed'
         if d['phase'] == 'needs_review':
             try: self._current(d)
             except (core.Error, OSError): d['phase'] = 'changes_needed'
@@ -211,25 +224,31 @@ class WorkflowStore:
             d['previous_review'] = d.get('review') or d.get('previous_review')
             d.update(delivery=None, review=None)
         d['attempt'] = None
+        d['attempts'] = []
         d['retry_reason'] = a['reason']
 
     def _deliver(self, d, a):
-        attempt = self._ready(d, 'implementation')
+        slots = self._ready(d, 'implementation')
         files = fingerprint(self.project, a['files'])
         # Reviewers also see dirty paths the deliverer did not list (advisory only).
         unlisted = [path for path in dirty_paths(self.project) if path not in files][:50]
-        d['delivery'] = dict(agent_id=attempt['agent_id'], role=attempt['role'], configured_model=attempt['model'], configured_effort=attempt['effort'], files=files, summary=text(a['summary'], 'summary'), tests=text(a['tests'], 'tests'))
+        first = slots[0]
+        d['delivery'] = dict(agent_id=first['agent_id'], role=first['role'], configured_model=first['model'], configured_effort=first['effort'], files=files, summary=text(a['summary'], 'summary'), tests=text(a['tests'], 'tests'))
+        if len(slots) > 1: d['delivery']['agent_ids'] = [s['agent_id'] for s in slots]
         if unlisted: d['delivery']['unlisted_changes'] = unlisted
-        d.update(phase='needs_review', attempt=None, review=None)
+        d.update(phase='needs_review', attempt=None, attempts=[], review=None)
 
     def _review(self, d, a):
-        attempt = self._ready(d, 'review')
-        if attempt['agent_id'] in d['implementer_ids']: raise core.Error('Reviewer must be independent of the implementers')
+        slots = self._ready(d, 'review')
+        if any(s['agent_id'] in d['implementer_ids'] for s in slots):
+            raise core.Error('Reviewer must be independent of the implementers')
         self._current(d)
         if a['verdict'] not in ('pass', 'changes'): raise core.Error('Invalid review verdict')
         if a['verdict'] == 'pass': self._clean(d)
-        d['review'] = dict(agent_id=attempt['agent_id'], role=attempt['role'], configured_model=attempt['model'], configured_effort=attempt['effort'], files=d['delivery']['files'], verdict=a['verdict'], summary=text(a['summary'], 'summary'))
-        d.update(phase='ready' if a['verdict'] == 'pass' else 'changes_needed', attempt=None)
+        first = slots[0]
+        d['review'] = dict(agent_id=first['agent_id'], role=first['role'], configured_model=first['model'], configured_effort=first['effort'], files=d['delivery']['files'], verdict=a['verdict'], summary=text(a['summary'], 'summary'))
+        if len(slots) > 1: d['review']['agent_ids'] = [s['agent_id'] for s in slots]
+        d.update(phase='ready' if a['verdict'] == 'pass' else 'changes_needed', attempt=None, attempts=[])
 
     def _finish(self, d, a):
         if d['phase'] != 'ready' or not d['review'] or d['review']['verdict'] != 'pass':
@@ -254,8 +273,11 @@ class WorkflowStore:
             locator = text(a['locator'], 'locator')
             owner = _identifier(a['owner'], 'owner', 256)
             owners = {d['session'], *d['implementer_ids']}
-            if d['attempt'] and d['attempt']['agent_id']: owners.add(d['attempt']['agent_id'])
-            if d['review']: owners.add(d['review']['agent_id'])
+            for s in self._attempts(d):
+                if s['agent_id']: owners.add(s['agent_id'])
+            if d['review']:
+                owners.add(d['review']['agent_id'])
+                owners.update(d['review'].get('agent_ids') or [])
             if owner not in owners: raise core.Error('Resource owner must be an observed task agent or the coordinator session')
             if any(r['kind'] == kind and r['locator'] == locator and r['status'] == 'open' for r in resources.values()):
                 raise core.Error('This resource is already recorded as open')
@@ -268,10 +290,10 @@ class WorkflowStore:
                         evidence=text(a['evidence'], 'evidence'))
 
     def _ready(self, d, stage):
-        attempt = d['attempt']
-        if not attempt or attempt['stage'] != stage or not all((attempt['agent_id'], attempt['started'], attempt['stopped'])):
+        slots = self._attempts(d)
+        if not slots or any(s['stage'] != stage or not all((s['agent_id'], s['started'], s['stopped'])) for s in slots):
             raise core.Error('Waiting for correlated dispatch, start and stop hook observations')
-        return attempt
+        return slots
 
     def _current(self, d):
         if not d['delivery'] or fingerprint(self.project, list(d['delivery']['files'])) != d['delivery']['files']:
@@ -282,29 +304,35 @@ class WorkflowStore:
         with self.context._transaction(write=True) as conn:
             d = self._get(conn, task)
             if d['session'] != session or d['phase'] in TERMINAL: return d
-            attempt = d['attempt']
-            if not attempt: return d
+            slots = self._attempts(d)
+            if not slots: return d
             before = json.dumps(d, sort_keys=True)
-            if event == 'PreToolUse' and token == attempt['token'] and role == hosts.export().agent_name(attempt['role']) and tool_use_id:
+            expected_role = hosts.export().agent_name(slots[0]['role'])
+            if event == 'PreToolUse' and token and role == expected_role and tool_use_id:
                 # One exact dispatch per token. Repeated retries need a fresh token.
-                if not attempt['tool_use_id']: attempt['tool_use_id'] = tool_use_id
-            elif event == 'PostToolUse' and tool_use_id and tool_use_id == attempt['tool_use_id'] and agent_id:
-                if not attempt['agent_id']:
-                    if attempt['stage'] == 'review' and agent_id in d['implementer_ids']: return d
-                    attempt['agent_id'] = agent_id
-                    if attempt['stage'] == 'implementation' and agent_id not in d['implementer_ids']:
+                slot = next((s for s in slots if s['token'] == token), None)
+                if slot and not slot['tool_use_id']: slot['tool_use_id'] = tool_use_id
+            elif event == 'PostToolUse' and tool_use_id and agent_id:
+                slot = next((s for s in slots if s['tool_use_id'] == tool_use_id), None)
+                if slot and not slot['agent_id']:
+                    if slot['stage'] == 'review' and agent_id in d['implementer_ids']: return d
+                    if any(s['agent_id'] == agent_id for s in slots): return d
+                    slot['agent_id'] = agent_id
+                    if slot['stage'] == 'implementation' and agent_id not in d['implementer_ids']:
                         d['implementer_ids'].append(agent_id)
-            elif event in ('SubagentStart', 'SubagentStop') and agent_id and role == hosts.export().agent_name(attempt['role']):
+            elif event in ('SubagentStart', 'SubagentStop') and agent_id and role == expected_role:
                 receipt = [event, agent_id, role]
                 if receipt not in d['lifecycle']:
                     d['lifecycle'] = (d['lifecycle'] + [receipt])[-64:]
-            if attempt['agent_id']:
-                for observed, observed_id, observed_role in d['lifecycle']:
-                    if observed_id == attempt['agent_id'] and observed_role == hosts.export().agent_name(attempt['role']):
-                        attempt['started' if observed == 'SubagentStart' else 'stopped'] = True
+            for slot in slots:
+                if slot['agent_id']:
+                    for observed, observed_id, observed_role in d['lifecycle']:
+                        if observed_id == slot['agent_id'] and observed_role == expected_role:
+                            slot['started' if observed == 'SubagentStart' else 'stopped'] = True
+            d['attempt'] = slots[0]
             # Lifecycle may arrive before spawn return. Adapter can replay bounded receipts.
-            if attempt['agent_id'] and attempt['started']:
-                target = 'reviewing' if attempt['stage'] == 'review' else 'implementing'
+            if any(s['agent_id'] and s['started'] for s in slots):
+                target = 'reviewing' if slots[0]['stage'] == 'review' else 'implementing'
                 if d['phase'] == 'blocked': d['resume_phase'] = target
                 else: d['phase'] = target
             if before == json.dumps(d, sort_keys=True): return d
@@ -316,7 +344,7 @@ class WorkflowStore:
         with self.context._transaction(write=True) as conn:
             d = self._get(conn, task)
             if d['phase'] in TERMINAL | {'blocked'}: return None
-            key = json.dumps([d['phase'], d['attempt'], d['delivery'], d['review']], sort_keys=True)
+            key = json.dumps([d['phase'], d.get('attempts') or d['attempt'], d['delivery'], d['review']], sort_keys=True)
             digest = hashlib.sha256(key.encode()).hexdigest()
             if d['correction'] == digest: return None
             # Bookkeeping only: do not bump the CAS version, or a coordinator that just
@@ -335,9 +363,18 @@ def instruction(d):
                  'blocked': 'wait for the blocker to be resolved', 'completed': 'workflow complete; use workflow next for a new goal', 'cancelled': 'workflow cancelled; use workflow next for a new goal'}
     open_resources = sum(r['status'] == 'open' for r in d.get('resources', {}).values())
     cleanup = (' 待处理任务资源：' + str(open_resources) + '。' if i18n.LANG == 'zh' else ' Open task resources: ' + str(open_resources) + '.') if open_resources and d['phase'] not in {'blocked', 'cancelled'} else ''
+    slots = d.get('attempts') or ([d['attempt']] if d.get('attempt') else [])
+    if len(slots) > 1:
+        assigned = ', '.join(hosts.subagent_name(s['role'], s['model'], index=idx, total=len(slots)) for idx, s in enumerate(slots, 1))
+    elif slots:
+        assigned = hosts.subagent_name(slots[0]['role'], slots[0]['model'])
+    else:
+        assigned = None
     if i18n.LANG == 'zh':
         steps = {'awaiting_assignment': '派发实施', 'changes_needed': '派发修订', 'dispatch_pending': '使用派发标记启动 agent，等待宿主回执',
                  'implementing': '等待实施完成并登记交付', 'needs_review': '派发独立审查', 'reviewing': '等待审查并登记结论',
                  'ready': '核对产物后完成', 'blocked': '等待阻碍解除', 'completed': '本轮完成；新任务用 workflow next', 'cancelled': '本轮取消；新任务用 workflow next'}
-        return 'Crew 工作流 ' + d['task_id'] + '：' + steps[d['phase']] + cleanup + '。编辑校验：' + d.get('edit_policy', 'stage') + '。协调者负责派发、整合与验收；实施交给配置的执行角色。变更前先用 workflow read 读取当前状态。'
-    return 'Crew workflow ' + d['task_id'] + ': ' + d['phase'] + '. Next: ' + next_step[d['phase']] + cleanup + '. Edit checks: ' + d.get('edit_policy', 'stage') + '. Coordinator: delegate execution to configured roles; integrate and accept their results. Use workflow read before changing state.'
+        tag = ('（当前指派：' + assigned + '）') if assigned else ''
+        return 'Crew 工作流 ' + d['task_id'] + '：' + steps[d['phase']] + tag + cleanup + '。编辑校验：' + d.get('edit_policy', 'stage') + '。协调者负责派发、整合与验收；实施交给配置的执行角色。变更前先用 workflow read 读取当前状态。'
+    tag = (' [' + assigned + ']') if assigned else ''
+    return 'Crew workflow ' + d['task_id'] + ': ' + d['phase'] + tag + '. Next: ' + next_step[d['phase']] + cleanup + '. Edit checks: ' + d.get('edit_policy', 'stage') + '. Coordinator: delegate execution to configured roles; integrate and accept their results. Use workflow read before changing state.'

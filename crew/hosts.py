@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 import tomllib
 
+from . import i18n
+
 HOSTS = ('codex', 'claude')
 LABELS = {'codex': 'Codex', 'claude': 'Claude Code'}
 EFFORTS = {'codex': ('minimal', 'low', 'medium', 'high', 'xhigh'),
@@ -55,6 +57,38 @@ def mismatch():
 
 def label(host=None): return LABELS[host or CURRENT]
 def efforts(host=None): return EFFORTS[host or CURRENT]
+
+
+ROLE_LABELS = {
+    'zh': {
+        'coordinator': '协调者',
+        'implementer': '实施者',
+        'reviewer': '审查者',
+        'researcher': '研究者',
+        'tester': '测试者',
+    },
+    'en': {
+        'coordinator': 'coordinator',
+        'implementer': 'implementer',
+        'reviewer': 'reviewer',
+        'researcher': 'researcher',
+        'tester': 'tester',
+    },
+}
+
+
+def role_label(role_id, language=None):
+    """Localized display name for built-in roles; custom roles keep their role_id."""
+    lang = 'zh' if (language or i18n.LANG) == 'zh' else 'en'
+    return ROLE_LABELS[lang].get(role_id, role_id)
+
+
+def subagent_name(role_id, model, language=None, index=None, total=1):
+    """Canonical display name for dispatched subagents: ``[model]role`` (or ``#n`` when parallel)."""
+    base = f'[{model}]{role_label(role_id, language)}'
+    if total and total > 1 and index is not None:
+        return f'{base}#{index}'
+    return base
 
 
 def home(host=None):

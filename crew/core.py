@@ -23,6 +23,7 @@ def presets(language=None):
     return get_presets(language or i18n.LANG)
 
 SCHEMA = 1
+MAX_INSTANCES_LIMIT = 32
 EFFORTS = hosts.EFFORTS['codex']  # Codex values; use hosts.efforts() for the selected host
 START = '<!-- crew:start -->'
 END = '<!-- crew:end -->'
@@ -195,7 +196,7 @@ def validate_view(value, host=None):
     """Validate one host's role definition (the flat form used by wizard and exports)."""
     host = host or hosts.CURRENT
     if not isinstance(value, dict): raise Error('Role must be an object')
-    unknown = set(value) - {'model', 'effort', 'description', 'instructions', 'disabled'}
+    unknown = set(value) - {'model', 'effort', 'description', 'instructions', 'disabled', 'max_instances'}
     if unknown: raise Error(f'Unsupported {host} role fields: ' + ', '.join(sorted(unknown)) + '; these fields are not exported. Remove them or manage this agent outside Crew.')
     if value.get('disabled') is True and len(value) == 1: return
     for key in ('model', 'description'):
@@ -204,6 +205,10 @@ def validate_view(value, host=None):
     if '\n' in value['model'] or len(value['model']) > 200: raise Error('Invalid model identifier')
     if value.get('effort') not in hosts.EFFORTS[host]: raise Error(f'effort must be one of {hosts.EFFORTS[host]}')
     if 'disabled' in value and not isinstance(value['disabled'], bool): raise Error('disabled must be boolean')
+    if 'max_instances' in value:
+        limit = value['max_instances']
+        if type(limit) is not int or not 1 <= limit <= MAX_INSTANCES_LIMIT:
+            raise Error(f'max_instances must be an integer between 1 and {MAX_INSTANCES_LIMIT}')
 
 def validate_name(name):
     if not isinstance(name, str) or not re.fullmatch(r'[a-z][a-z0-9_-]{0,47}', name): raise Error('Role id must match [a-z][a-z0-9_-]{0,47}')
@@ -224,7 +229,9 @@ def effective(project, host=None):
     global_cfg, local = read(path('global', project)), read(path('project', project))
     roles = {}
     for scope, cfg in [('global', global_cfg), ('project', local)]:
-        for name, val in hosts.views(cfg, host).items(): roles[name] = dict(val, source=scope, prompt_state='empty_agent' if not val.get('instructions', '').strip() else 'configured')
+        for name, val in hosts.views(cfg, host).items():
+            roles[name] = dict(val, max_instances=val.get('max_instances', 1), source=scope,
+                               prompt_state='empty_agent' if not val.get('instructions', '').strip() else 'configured')
     local_enabled, global_enabled = hosts.enabled(local, host), hosts.enabled(global_cfg, host)
     return {'schema_version': SCHEMA, 'host': host, 'enabled': local_enabled if local_enabled is not None else (global_enabled if global_enabled is not None else True),
             'enabled_source': 'project' if local_enabled is not None else 'global', 'roles': roles}
@@ -399,7 +406,10 @@ def preflight(project):
     legacy = host == 'codex' and ((home() / 'rolepilot' / 'config.json').exists() or (project_root(project) / '.rolepilot' / 'config.json').exists())
     return {'host': host, 'legacy_config_detected': legacy, 'migration_command': 'crew migrate' if legacy else None, 'status': 'needs_export' if drift else ('disabled' if not cfg['enabled'] else ('ready' if active else 'needs_setup')), 'enabled': cfg['enabled'], 'export_drift': drift,
             'stale_exports': sorted(stale), 'next': 'Preview export, then export --apply to synchronize project role files.' if drift else None,
-            'project': str(project_root(project)), 'roles': active, 'roles_for_other_hosts_only': other_host_roles(project),
+            'project': str(project_root(project)), 'roles': active,
+            'subagent_names': {name: hosts.subagent_name(name, cfg['roles'][name]['model']) for name in active},
+            'max_instances': {name: cfg['roles'][name]['max_instances'] for name in active},
+            'roles_for_other_hosts_only': other_host_roles(project),
             'questions': [] if active or not cfg['enabled'] else questions(),
             'host_plugin_enabled': 'unknown', 'model_availability': 'not_live_verified'}
 
@@ -461,7 +471,7 @@ def export_agents(project, scope='project', apply=False, clean=False):
     return result
 
 
-def install_presets(scope, project, names, model, effort, language=None):
+def install_presets(scope, project, names, model, effort, language=None, max_instances=1):
     templates = presets(language)
     unknown = set(names) - set(templates)
     if unknown: raise Error('Unknown presets: ' + ', '.join(sorted(unknown)))
@@ -474,7 +484,7 @@ def install_presets(scope, project, names, model, effort, language=None):
         added, skipped = [], []
         for name in names:
             if name in existing: skipped.append(name); continue
-            role = dict(templates[name], model=model, effort=effort)
+            role = dict(templates[name], model=model, effort=effort, max_instances=max_instances)
             validate_view(role); cfg['roles'][name] = hosts.with_view(cfg['roles'].get(name), role); added.append(name)
         save(p, cfg)
     return {'added': added, 'skipped_existing': skipped, 'saved': str(p), 'host': hosts.CURRENT, 'next': 'Review/edit prompts and model choices, then preview export.'}

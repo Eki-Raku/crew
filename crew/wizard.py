@@ -95,7 +95,7 @@ def advance(scope, project, answer=None, step=None, revision=None, apply=False, 
                 state['selected'] = answer
             elif step.endswith('.model'):
                 if not isinstance(answer, str) or not answer.strip() or '\n' in answer or len(answer) > 200: raise c.Error('Invalid model identifier')
-                name = current['role']; state['roles'][name] = dict(c.presets(state['language'])[name], model=answer)
+                name = current['role']; state['roles'][name] = dict(c.presets(state['language'])[name], model=answer, max_instances=1)
             elif step.endswith('.effort'):
                 if answer not in hosts.efforts(): raise c.Error('Select a listed effort value')
                 state['roles'][current['role']]['effort'] = answer

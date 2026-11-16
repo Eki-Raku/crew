@@ -48,11 +48,11 @@ def parser():
     s = command('enable'); s.add_argument('--scope', choices=['global', 'project'], default='project'); s.add_argument('--disabled', action='store_true')
     s = command('role'); s.add_argument('action', choices=['list', 'show', 'create', 'update', 'delete', 'disable', 'enable']); s.add_argument('name', nargs='?')
     s.add_argument('--scope', choices=['global', 'project'], default='project')
-    s.add_argument('--model'); s.add_argument('--effort', choices=hosts.ALL_EFFORTS); s.add_argument('--description'); prompts = s.add_mutually_exclusive_group(); prompts.add_argument('--instructions'); prompts.add_argument('--instructions-file', help=i18n.t('UTF-8 prompt file; empty file clears the prompt'))
+    s.add_argument('--model'); s.add_argument('--effort', choices=hosts.ALL_EFFORTS); s.add_argument('--description'); s.add_argument('--max-instances', type=int, help='Maximum parallel instances for this role (default 1)'); prompts = s.add_mutually_exclusive_group(); prompts.add_argument('--instructions'); prompts.add_argument('--instructions-file', help=i18n.t('UTF-8 prompt file; empty file clears the prompt'))
     s.add_argument('--apply', action='store_true', help='Confirm delete (reveals inherited global role); disable is usually safer')
     s = command('init'); s.add_argument('--scope', choices=['global', 'project'], default='project'); s.add_argument('--answer', help='JSON value answering the current step'); s.add_argument('--step'); s.add_argument('--revision', type=int); s.add_argument('--apply', action='store_true'); s.add_argument('--confirm-token'); s.add_argument('--reset', action='store_true'); s.add_argument('--models-file', help='JSON array of model IDs supplied by the host or user'); s.add_argument('--interactive', action='store_true')
     s = command('migrate'); s.add_argument('--scope', choices=['global', 'project', 'all'], default='all'); s.add_argument('--apply', action='store_true')
-    s = command('presets'); s.add_argument('action', choices=['list', 'install']); s.add_argument('names', nargs='*'); s.add_argument('--scope', choices=['global', 'project'], default='project'); s.add_argument('--model'); s.add_argument('--effort', choices=hosts.ALL_EFFORTS); s.add_argument('--prompt-lang', choices=['zh', 'en'], help='Built-in prompt language (defaults to UI language)')
+    s = command('presets'); s.add_argument('action', choices=['list', 'install']); s.add_argument('names', nargs='*'); s.add_argument('--scope', choices=['global', 'project'], default='project'); s.add_argument('--model'); s.add_argument('--effort', choices=hosts.ALL_EFFORTS); s.add_argument('--max-instances', type=int, default=1, help='Maximum parallel instances per installed role (default 1)'); s.add_argument('--prompt-lang', choices=['zh', 'en'], help='Built-in prompt language (defaults to UI language)')
     s = command('export'); s.add_argument('--scope', choices=['global', 'project'], default='project'); s.add_argument('--apply', action='store_true'); s.add_argument('--clean', action='store_true')
     s = command('hook'); s.add_argument('action', choices=['receive', 'ping', 'status'])
     context_cli.register(command)
@@ -93,14 +93,15 @@ def run(args):
                 if fields: copied = {'host': other, 'fields': fields}
                 break
             if instructions is None: instructions = ''
-        value = {'model': args.model, 'effort': args.effort, 'description': description, 'instructions': instructions}
+        value = {'model': args.model, 'effort': args.effort, 'description': description, 'instructions': instructions,
+                 'max_instances': 1 if args.action == 'create' and args.max_instances is None else args.max_instances}
         result = c.role_write(args.scope, project, args.name, value, args.action)
         if copied: result['copied_from'] = copied
         return result
     if args.cmd == 'presets':
         if args.action == 'list': return {'presets': c.presets(args.prompt_lang), 'model_selection': 'Choose model and effort when installing; editable afterwards.'}
         if not args.model or not args.effort: raise c.Error('Preset install requires --model and --effort from your host model picker')
-        return c.install_presets(args.scope, project, args.names or list(c.presets()), args.model, args.effort, args.prompt_lang)
+        return c.install_presets(args.scope, project, args.names or list(c.presets()), args.model, args.effort, args.prompt_lang, max_instances=args.max_instances)
     if args.cmd == 'migrate':
         from . import migration
         return migration.migrate(project, args.scope, args.apply)
@@ -186,7 +187,7 @@ def _hook_receive(project, deadline):
             result = context_hooks.handle(event, project, deadline=deadline)
             if name == 'SessionStart':
                 state = c.preflight(project)
-                summary = {k: state[k] for k in ('host', 'status', 'enabled', 'roles', 'stale_exports')}
+                summary = {k: state[k] for k in ('host', 'status', 'enabled', 'roles', 'subagent_names', 'max_instances', 'stale_exports')}
                 extra = 'Crew configuration: ' + json.dumps(summary, ensure_ascii=False, separators=(',', ':'))
                 if result:
                     result['hookSpecificOutput']['additionalContext'] += '\n' + extra
@@ -291,6 +292,7 @@ def tui(project):
                 print('Effort options: ' + ', '.join(hosts.efforts()))
                 effort = ask('Supported effort', old.get('effort', 'low'))
                 value = {'model': model, 'effort': effort, 'description': ask('Description', old.get('description', '')),
+                         'max_instances': int(ask('Max parallel instances', str(old.get('max_instances', 1)))),
                          'instructions': edit_prompt(old.get('instructions', ''), existing=name in c.effective(project)['roles'])}
                 action = 'update' if hosts.view(c.read(c.path(scope, project))['roles'].get(name)) is not None else 'create'
                 c.validate_name(name); c.validate_view(value); output(dict(value, prompt_state='configured' if value['instructions'].strip() else 'empty_agent'))
@@ -316,8 +318,9 @@ def tui(project):
                 names = ask('Role ids separated by commas; empty = all').strip()
                 selected = [n.strip() for n in names.split(',')] if names else list(c.presets())
                 model = ask(model_prompt()); effort = ask('Supported effort', 'low')
+                max_instances = int(ask('Max parallel instances', '1'))
                 if ask('Import missing roles? Existing roles are preserved. y/N').lower() == 'y':
-                    output(c.install_presets(scope, project, selected, model, effort))
+                    output(c.install_presets(scope, project, selected, model, effort, max_instances=max_instances))
             elif choice == '7': scope = 'global' if scope == 'project' else 'project'
             elif choice == '12': hosts.select(next(h for h in hosts.HOSTS if h != hosts.CURRENT))
             elif choice == '8':

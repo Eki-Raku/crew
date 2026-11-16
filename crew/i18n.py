@@ -275,4 +275,11 @@ ZH.update({
     'Resource creation evidence': '资源创建证据',
     'Resource ID': '资源 ID',
     'Cleanup evidence or user retention instruction': '清理结果证据或用户保留要求',
+    'Max parallel instances': '最多并行实例数',
+    'Parallel instance count': '并行实例数量',
+    'Maximum parallel instances for this role (default 1)': '同一角色允许同时创建的最大并行数量（默认 1）',
+    'Maximum parallel instances per installed role (default 1)': '每个导入角色允许同时创建的最大并行数量（默认 1）',
+    'Number of parallel role instances to dispatch (up to role max_instances)': '并行派发的同类角色数量（不超过角色配置的 max_instances）',
+    'Dispatch count must be a positive integer': '派发数量必须为正整数',
+    '--count can only be used with dispatch': '--count 只能与 dispatch 一起使用',
 })

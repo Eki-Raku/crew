@@ -9,10 +9,10 @@
 ```sh
 crew workflow start --session '<宿主真实 session_id>' --goal '实现目标' --acceptance '验收要求' --implementer implementer --reviewer reviewer
 crew workflow read --task '<task_id>'
-crew workflow dispatch --task '<task_id>' --expected-version 1
+crew workflow dispatch --task '<task_id>' --expected-version 1 [--count 1]
 ```
 
-协调者把返回的 `dispatch_input` 原样用于宿主 `spawn_agent`，可在 message 后追加代码位置、相关资料等。Hook 通过显式标记和 tool_use_id 关联派发，再用成功返回的 agent_id 匹配生命周期事件。生命周期事件提前到达时暂存并按精确 ID 关联。
+协调者把返回的 `dispatch_input`（并行时为 `dispatch_inputs` 列表）原样用于宿主 `spawn_agent`，可在 message 后追加代码位置、相关资料和互不重叠的子任务范围。`--count` 受角色配置中的 `max_instances`（默认 `1`）限制，工作量较大时可按上限同时派发多个同类实例并行执行，并在名称后附加 `#1`、`#2` 区分。`dispatch_input.name`（及 `preflight.subagent_names`、`workflow report` 中的 `subagent_name`）按 `[模型名]角色名` 规范生成统一显示名（内置角色随 `--lang` 显示中英文，自定义角色保留角色 ID），底层 `agent_type`（`crew_<role>` / `crew-<role>`）保持不变以兼容宿主标识校验。Hook 通过显式标记和 tool_use_id 关联派发，再用成功返回的 agent_id 匹配生命周期事件。生命周期事件提前到达时暂存并按精确 ID 关联。
 
 实施返回后，读取版本，再登记交付：
 
