@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.2
 
 - 回执文件损坏或被手改时，`record`/`doctor` 视为空回执，不再让 Hook 抛异常。
 - Git 探测失败（如 safe.directory）且处于 Git 检出内时，拒绝回退为目录作用域，避免同一项目上下文分叉；非 Git 目录行为不变。
