@@ -108,7 +108,7 @@ Hook 的内部共享预算为 2 秒，Unix 主进程外层时限为 2.5 秒，�
 2. 用新源码目录或新发行包替换插件。保留旧目录以便回退。Git 源码修复不自动更新已有 release ZIP；以实际版本为准。
 3. 对每个使用的宿主运行 `--host HOST doctor`、`--host HOST export`；检查目标、增删文件和未知字段报错，再执行 `--host HOST export --apply`。全局导出需要另外明确 `--scope global`，不会从项目复制覆盖值。
 4. 如果之前为 Codex 执行过 `setup --apply` 且插件路径变了，重新预览 `setup` 再 `setup --apply`，更新全局入口中的绝对路径。Claude 不需要该入口。重新开启宿主会话，使新 Hook 和首次创建的 agents 目录生效。
-5. 回退时停止新 Hook，换回保留的旧插件，再从备份恢复配置/导出；0.4.2 只新增 workflow_meta 表、不改变 user_version，旧版本可继续读取。回退也会恢复旧版本的已知问题，不建议继续处理不可信项目。`uninstall --apply` 仅移除 Crew 标记入口，不删除配置、任务或导出；`export --clean --apply` 只清理当前作用域的受管理导出。
+5. 回退时停止新 Hook，换回保留的旧插件，再从备份恢复配置/导出；0.5.0 不改变数据库 schema，旧配置（缺省 `max_instances`）与既有一人工作流记录均可直接兼容。回退也会恢复旧版本的已知问题，不建议继续处理不可信项目。`uninstall --apply` 仅移除 Crew 标记入口，不删除配置、任务或导出；`export --clean --apply` 只清理当前作用域的受管理导出。
 
 ## 独立验证
 

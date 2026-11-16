@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 - 规范统一调配子智能体命名格式为 `[模型名]角色名`（如 `[gpt-6.1-sol]实施者` / `[gpt-6.1-sol]implementer`）：内置角色随 `--lang` 语言设置显示中文或英文角色名，自定义角色保留角色 ID；底层 `agent_type` 保持不变。同步输出至 `preflight.subagent_names`、SessionStart 摘要、`dispatch_input.name`、派发消息头、`workflow report`、`SubagentStart` 上下文与 `coordinator` 预设提示词。
 - 新增角色配置字段 `max_instances`（正整数，默认 `1`），用于设置同一类型角色最多允许同时创建并行的实例数量；支持通过 `role create/update --max-instances`、`presets install --max-instances`、向导与 TUI 管理，并在 `preflight.max_instances`、`SessionStart` 摘要与 `workflow dispatch --count` 中生效。工作流支持一次派发多个并行槽位（命名自动编号 `#1`、`#2`…），各自独立关联 `spawn_agent`、编辑身份校验与 Start/Stop 生命周期，全部停止后统一交付与审查。
