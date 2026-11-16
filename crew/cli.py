@@ -13,6 +13,7 @@ from . import hosts
 from . import i18n
 from . import wizard
 from . import context_cli
+from . import workflow_cli
 
 def print(value=''):
     builtins.print(i18n.t(value))
@@ -55,11 +56,13 @@ def parser():
     s = command('export'); s.add_argument('--scope', choices=['global', 'project'], default='project'); s.add_argument('--apply', action='store_true'); s.add_argument('--clean', action='store_true')
     s = command('hook'); s.add_argument('action', choices=['receive', 'ping', 'status'])
     context_cli.register(command)
+    workflow_cli.register(command)
     return p
 
 def run(args):
     project = str(c.project_root(args.project))
     if args.cmd == 'context': return context_cli.run(args, project)
+    if args.cmd == 'workflow': return workflow_cli.run(args, project)
     if args.cmd == 'preflight': return c.preflight(project)
     if args.cmd == 'doctor': return c.doctor(project)
     if args.cmd == 'config': return dict(c.effective(project), host_source=hosts.SOURCE, home=str(c.home()))
@@ -190,10 +193,21 @@ def _hook_receive(project, deadline):
                 else:
                     result = {'hookSpecificOutput': {'hookEventName': 'SessionStart', 'additionalContext': extra}}
                 if event.get('source') != 'compact': result['systemMessage'] = hook_banner(state)
+            from . import workflow_hooks
+            workflow = workflow_hooks.handle(event, project, deadline=deadline)
+            if workflow:
+                if 'decision' in workflow: return workflow
+                if 'hookSpecificOutput' in workflow:
+                    addition = workflow['hookSpecificOutput']
+                    if 'hookSpecificOutput' in result:
+                        existing = result['hookSpecificOutput']
+                        existing['additionalContext'] = existing.get('additionalContext', '') + '\n' + addition.get('additionalContext', '')
+                        existing.update({k: v for k, v in addition.items() if k != 'additionalContext'})
+                    else: result.update(workflow)
             return result
         except (c.Error, OSError, ValueError) as exc:
             if name in ('SessionStart', 'UserPromptSubmit', 'SubagentStart'):
-                return {'hookSpecificOutput': {'hookEventName': name, 'additionalContext': 'Crew state could not be read: ' + str(exc)[:400] + '. Continue cautiously; no record was deleted.'}}
+                return {'hookSpecificOutput': {'hookEventName': name, 'additionalContext': 'Crew state could not be read; workflow unavailable: ' + str(exc)[:400] + '. Continue cautiously; no record was deleted.'}}
             return {}
     except Exception as exc:  # Any failure here must stay a notice, never a blocked prompt.
         return hook_notice(event, i18n.t('Crew hook skipped: ') + i18n.t(str(exc))[:400])
@@ -266,6 +280,7 @@ def tui(project):
         print(i18n.t('Host: ') + hosts.label())
         if not c.effective(project)['roles']: print('Start with 10 for guided setup, or 2 for a custom/empty agent.')
         print('1 Roles  2 Create/update  3 Enable/disable/delete  4 Setup entry\n5 Export agents  6 Doctor / Hook ping  7 Scope  8 Enable/disable  9 Built-in roles  10 Guided setup  11 Shared context  12 Switch host  0 Exit')
+        print('13 Engineering workflow')
         try:
             choice = ask('Select')
             if choice == '0': return {'status': 'closed'}
@@ -293,6 +308,7 @@ def tui(project):
             elif choice == '6':
                 output(c.doctor(project))
                 if ask('Run simulated Hook ping? y/N').lower() == 'y': output(c.record({'hook_event_name': 'SelfTest'}, project, True))
+            elif choice == '13': output(workflow_cli.menu(project, ask, output))
             elif choice == '11': output(context_cli.menu(project, ask, output))
             elif choice == '10': output(guided_init(project, scope))
             elif choice == '9':

@@ -199,3 +199,80 @@ ZH.update({
 })
 PREFIXES.update({'Invalid hosts section in ': 'hosts 配置无效：', 'Crew hook skipped: ': 'Crew Hook 已跳过：'})
 TEXT_FIELDS.add('systemMessage')
+
+# Engineering workflows. Keep action names, role IDs and saved user content stable.
+ZH.update({
+    '13 Engineering workflow': '13 工程协作流程',
+    'Workflow action: next/dispatch/retry/deliver/review/finish/pause/resume/cancel; q exits': '流程操作：next（下一项）/dispatch（派发）/retry（重试）/deliver（交付）/review（复核）/finish（完成）/pause（暂停）/resume（继续）/cancel（取消）；q 返回',
+    'Goal': '目标',
+    'Acceptance criteria': '验收条件',
+    'Reason': '原因',
+    'Summary': '摘要',
+    'Artifact paths separated by commas': '交付文件路径，用逗号分隔',
+    'Test evidence': '测试证据',
+    'Review verdict: pass/changes': '复核结论：pass（通过）/changes（需要修改）',
+    'Crew is disabled': 'Crew 已停用',
+    'Provide 1 to 128 artifact paths': '请提供 1 至 128 个交付文件路径',
+    'Artifact paths must stay inside the project': '交付文件路径必须位于当前项目内',
+    'Artifact symlinks are not supported': '交付文件路径不支持符号链接',
+    'Artifact must be a regular file of at most 16 MiB': '交付文件必须为不超过 16 MiB 的普通文件',
+    'Workflow context must be active': '协作流程关联的上下文记录必须处于活跃状态',
+    'Workflow not started': '协作流程尚未创建',
+    'Workflow roles must be configured and enabled': '请先配置并启用流程所用的角色',
+    'Implementation and review require different roles': '实现和复核需要使用不同角色',
+    'Session must be associated with this task': '会话必须先关联到当前任务',
+    'Workflow already exists; read it before continuing': '协作流程已存在，请先读取当前状态再继续',
+    'Finish or cancel this workflow before starting the next goal': '请先完成或取消当前流程，再开始下一项目标',
+    'Completed workflow cannot be cancelled': '已完成的流程无法取消',
+    'Workflow is closed': '协作流程已结束',
+    'Workflow is already paused': '协作流程已暂停',
+    'Workflow is not paused': '协作流程尚未暂停',
+    'Resume the workflow before continuing': '请先恢复已暂停的协作流程',
+    'This stage already has an assignment; wait or retry explicitly': '当前阶段已有任务派发，请等待结果或显式重试',
+    'Role is no longer enabled': '该角色已停用',
+    'No assignment to retry': '当前没有可重试的任务派发',
+    'Reviewer must be independent of the implementers': '复核者必须独立于所有实现者',
+    'Invalid review verdict': '复核结论无效',
+    'Implementation and independent review are required': '请先完成实现与独立复核',
+    'Invalid workflow action': '流程操作无效',
+    'Waiting for correlated dispatch, start and stop hook observations': '等待相互关联的派发、启动和停止 Hook 记录',
+    'Artifacts changed; retry implementation and review the new delivery': '交付文件已变化，请重试实现并复核新的交付版本',
+    'Crew dispatch does not match the current assignment. Read workflow state and use its dispatch_input.': 'Crew 派发与当前任务不匹配。请读取流程状态，使用其中的 dispatch_input。',
+    'Crew worker: complete your assigned stage and report files, tests and findings. Coordinator owns workflow transitions.': 'Crew 执行者：完成所分配的阶段，汇报文件、测试与发现。流程推进由协调者负责。',
+})
+ZH.update({
+    'Task ID (empty starts a workflow)': '任务 ID（留空创建协作流程）',
+    'Session ID': '会话 ID',
+    'Implementation role': '实施角色',
+    'Review role': '审查角色',
+    'Engineering workflow currently requires Codex hooks': '工程协作流程目前使用 Codex Hook',
+    ' Start delegated implementation before editing.': '先启动已派发的实施任务再修改。',
+    ' If waiting on approval or external work, pause with a reason.': '等待授权或外部工作时，请注明原因并暂停。',
+})
+
+ZH['Workflow text must contain 1 to 4096 characters; only newline and tab controls are allowed'] = '流程文本须包含 1 至 4096 个字符；控制字符仅允许换行和制表符'
+
+ZH.update({
+    'Invalid edit policy': '编辑校验模式无效',
+    'Identity checks for edits, or explicit stage-only compatibility': '校验编辑者身份，或显式采用仅阶段校验的兼容模式',
+    'Edit policy: identity/stage': '编辑校验：identity（身份校验）/stage（仅阶段兼容）',
+    'Edit policy can be selected only when starting a workflow cycle': '编辑校验模式只能在新一轮工作流开始时选择',
+    'This edit is not from the assigned implementation agent. Delegate the change to that agent.': '此次编辑者不符合当前实施任务的派发身份，请把修改交给已派发的实施 agent。',
+    'Crew cannot verify this edit caller. Use the assigned implementation agent on a Codex build exposing PreToolUse agent_id and agent_type. Older clients can explicitly select stage-only compatibility for a new workflow cycle.': 'Crew 无法核验此次编辑者。请使用支持 PreToolUse agent_id 和 agent_type 的 Codex，由已派发的实施 agent 修改。旧客户端可在新一轮工作流中显式选择 stage 兼容模式。',
+})
+
+ZH.update({
+    'Task resources remain open; record cleanup evidence or the user-approved retention before finishing': '任务仍有未处理资源；请登记清理证据或用户明确保留的依据后再完成',
+    'Workflow resource limit reached': '当前工作流资源记录已达到上限',
+    'Invalid resource kind': '资源类型无效',
+    'Resource owner must be an observed task agent or the coordinator session': '资源责任人必须是已关联的任务 agent 或协调会话',
+    'This resource is already recorded as open': '该资源已有未处理记录',
+    'Resource not found': '未找到资源',
+    'Resource kind: process/tab/app/temporary/other': '资源类型：process/tab/app/temporary/other',
+    'Resource locator': '资源定位信息',
+    'Resource owner': '资源责任 agent 或协调会话 ID',
+    'Resource purpose': '资源用途',
+    'Resource creation evidence': '资源创建证据',
+    'Resource ID': '资源 ID',
+    'Cleanup evidence or user retention instruction': '清理结果证据或用户保留要求',
+})

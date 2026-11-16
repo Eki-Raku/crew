@@ -1,0 +1,23 @@
+{
+  "date": "2026-11-16",
+  "client": "codex-cli 0.167.0-alpha.4",
+  "explicit_model": "gpt-6.1-sol",
+  "reasoning_effort": "low",
+  "observed_hook_models": ["gpt-6.1-sol"],
+  "completed_root_turns": 2,
+  "observed_subagents": 0,
+  "long_run_test": false,
+  "portable_hook_discovery": "failed: zero hooks",
+  "built_cli_bundle_hook_discovery": {"count": 9, "errors": []},
+  "isolated_hook_trust": "trusted",
+  "coordinator_edit_gate": "passed twice",
+  "successful_delegation_and_review": "not reached",
+  "blocking_error": "app-server socket directory must be a user-owned directory with mode 0700",
+  "sandbox": "workspace-write",
+  "sandbox_bypassed": false,
+  "raw_exec_log_sha256": [
+    "e2a730f2af5e6d749103041e14813d37a37380384ef39afa7be74f73f969c345",
+    "113494451cb7b177b422e8888d215578c9d25a81305ac609fed2b607aa75d6a3"
+  ],
+  "event_counts": {"SessionStart": 2, "UserPromptSubmit": 2, "PreToolUse": 6, "Stop": 2, "SessionEnd": 2}
+}

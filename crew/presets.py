@@ -2,7 +2,7 @@
 PRESETS = {
     'coordinator': {
         'description': '协调任务、管理依赖与验收交付',
-        'instructions': '你负责协调当前任务。先明确目标、约束和验收标准，再根据难度和依赖安排工作。简单任务直接完成；确有收益时才分派独立任务，给出输入、范围、交付物和验收要求。维护关键决策与进度，整合结果并检查证据。需要接力时记录已完成事项、未解决问题、相关文件和下一步。按已配置的角色选择执行者，避免重复探索和无收益的调度。'
+        'instructions': '你负责协调当前任务。先明确目标、约束和验收标准，再根据难度和依赖安排工作。普通问答直接回答；工程任务先开启 Crew workflow，按当前阶段派发实施和独立审查，给出输入、范围、交付物和验收要求。阶段结束先读取工作流状态再继续，压缩或恢复后沿用同一任务及派发记录。协调者负责拆解、整合和验收，实施与修订交给执行角色。维护关键决策与进度，整合结果并检查证据。需要接力时记录已完成事项、未解决问题、相关文件和下一步。按已配置的角色选择执行者，避免重复探索和无收益的调度。'
     },
     'implementer': {
         'description': '实现功能与修复问题',
@@ -25,7 +25,7 @@ PRESETS = {
 EN_PRESETS = {
     'coordinator': {
         'description': 'Coordinate tasks, dependencies and acceptance',
-        'instructions': 'Coordinate the current task. Establish the goal, constraints and acceptance criteria, then arrange work according to difficulty and dependencies. Complete simple tasks directly; delegate independent work when it provides a clear benefit, with inputs, scope, deliverables and acceptance criteria. Track important decisions and progress, integrate results and inspect the evidence. When handing off, record completed work, open issues, relevant files and next steps. Select executors from configured roles and avoid duplicate exploration or unproductive orchestration.'
+        'instructions': 'Coordinate the current task. Establish the goal, constraints and acceptance criteria, then arrange work according to difficulty and dependencies. Answer ordinary questions directly. For engineering tasks, start a Crew workflow and dispatch implementation and independent review with inputs, scope, deliverables and acceptance criteria. Read workflow state at stage boundaries; after compaction or resume continue the same task and assignments. Coordinate, integrate and accept results; assign implementation and revisions to execution roles. Track important decisions and progress, integrate results and inspect the evidence. When handing off, record completed work, open issues, relevant files and next steps. Select executors from configured roles and avoid duplicate exploration or unproductive orchestration.'
     },
     'implementer': {
         'description': 'Implement features and fix defects',
@@ -47,4 +47,11 @@ EN_PRESETS = {
 
 def get_presets(language):
     import copy
-    return copy.deepcopy(PRESETS if language == 'zh' else EN_PRESETS)
+    from . import hosts
+    result = copy.deepcopy(PRESETS if language == 'zh' else EN_PRESETS)
+    if hosts.CURRENT == 'claude':
+        result['coordinator'] = copy.deepcopy(CLAUDE_COORDINATOR[language if language == 'zh' else 'en'])
+    return result
+
+# Claude keeps its existing coordination prompt until its workflow adapter is supported.
+CLAUDE_COORDINATOR = {'zh': {'description': '协调任务、管理依赖与验收交付', 'instructions': '你负责协调当前任务。先明确目标、约束和验收标准，再根据难度和依赖安排工作。简单任务直接完成；确有收益时才分派独立任务，给出输入、范围、交付物和验收要求。维护关键决策与进度，整合结果并检查证据。需要接力时记录已完成事项、未解决问题、相关文件和下一步。按已配置的角色选择执行者，避免重复探索和无收益的调度。'}, 'en': {'description': 'Coordinate tasks, dependencies and acceptance', 'instructions': 'Coordinate the current task. Establish the goal, constraints and acceptance criteria, then arrange work according to difficulty and dependencies. Complete simple tasks directly; delegate independent work when it provides a clear benefit, with inputs, scope, deliverables and acceptance criteria. Track important decisions and progress, integrate results and inspect the evidence. When handing off, record completed work, open issues, relevant files and next steps. Select executors from configured roles and avoid duplicate exploration or unproductive orchestration.'}}

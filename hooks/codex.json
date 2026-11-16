@@ -54,6 +54,52 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/bin/crew\" hook receive --host codex",
+            "timeout": 5
+          }
+        ],
+        "matcher": "spawn_agent|Agent|apply_patch"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/bin/crew\" hook receive --host codex",
+            "timeout": 5
+          }
+        ],
+        "matcher": "spawn_agent|Agent"
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/bin/crew\" hook receive --host codex",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/bin/crew\" hook receive --host codex",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

@@ -177,3 +177,9 @@ python3 /路径/crew/bin/crew --host codex export --apply
 升级前停止 Hook 写入并备份各宿主 Crew 数据、项目配置和导出，再预览新导出。源码更新不会自动替换已有 release ZIP。[备份、升级与回退](docs/COOKBOOK.md#备份升级与回退) · [变更记录](CHANGELOG.md)
 
 独立测试命令：`python3 -m unittest discover -s tests -v`。CI 覆盖 Linux/macOS、Python 3.11/3.14，并验证归档结构；测试不启动真实宿主或模型。宿主加载、Hook 信任和模型可用性仍需单独验收，当前不声明已验证的宿主版本。
+
+### 持续分工（开发版）
+
+工程任务可使用 `crew workflow` 保存实施、独立审查和验收阶段。派发与生命周期通过 Codex Hook 关联；压缩后继续原任务。CLI/TUI 共用同一状态机，沿用当前角色模型配置。[使用说明、验证范围与恢复方式](docs/workflow.md)。
+
+原生 Codex CLI `0.167.0-alpha.4` 暂不加载 portable AgentPlugin 包中的本地 Hook。可运行 `python scripts/build_codex_cli.py --output /tmp/crew-codex-cli.zip` 生成采用 `.codex-plugin/plugin.json` 入口的兼容包；原 App 包保持不变。安装后仍需走客户端正常 Hook 信任流程。

@@ -173,3 +173,9 @@ Use explicit `--host` for manual context commands. An explicit `--provider` must
 Before upgrading, stop hook writers and back up each host's Crew directory, project `.crew`, and managed exports. Copy SQLite with all existing sidecars while writers are stopped, or use SQLite's backup API. Preview exports again before applying; rerun Codex `setup` if its installed path changed. Source updates do not update an existing release ZIP. See the [upgrade and rollback guide](docs/COOKBOOK.md#备份升级与回退) and [changelog](CHANGELOG.md).
 
 Run `python3 -m unittest discover -s tests -v` from the plugin directory. CI covers Linux/macOS with Python 3.11/3.14 and validates archive contents. Tests do not launch a host or call models. Actual host loading, hook trust, and model availability require separate verification; no tested host-version baseline is claimed. Path checks do not sandbox another local process continuously racing SQLite's own file opens.
+
+### Persistent delegation (development)
+
+`crew workflow` persists implementation, independent review and acceptance stages. Codex hooks correlate dispatch calls with worker lifecycle events; resumed sessions keep the same task. CLI/TUI share one state machine and use existing role/model configuration. See the [workflow guide](docs/workflow.md) and the [English skill protocol](skills/crew/SKILL.md#engineering-workflow-codex) for scope and recovery.
+
+Native Codex CLI `0.167.0-alpha.4` currently skips local hooks for portable AgentPlugin manifests. Build its compatibility ZIP with `python scripts/build_codex_cli.py --output /tmp/crew-codex-cli.zip`; it uses the native `.codex-plugin/plugin.json` entry while preserving the portable manifest as a backup. The primary App package is unchanged. Approve hooks through the normal client trust flow after installation.

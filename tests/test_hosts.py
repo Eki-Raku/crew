@@ -262,7 +262,7 @@ class HostTests(unittest.TestCase):
     def test_shipped_hook_files(self):
         claude = json.loads((ROOT / 'hooks' / 'hooks.json').read_text())['hooks']; codex = json.loads((ROOT / 'hooks' / 'codex.json').read_text())['hooks']
         for config, host, variable in ((claude, 'claude', '${CLAUDE_PLUGIN_ROOT}'), (codex, 'codex', '${PLUGIN_ROOT}')):
-            self.assertEqual(sorted(config), ['PostCompact', 'SessionEnd', 'SessionStart', 'SubagentStart', 'UserPromptSubmit'])
+            self.assertEqual(sorted(config), sorted(['PostCompact', 'SessionEnd', 'SessionStart', 'SubagentStart', 'UserPromptSubmit'] + (['PreToolUse', 'PostToolUse', 'SubagentStop', 'Stop'] if host == 'codex' else [])))
             for groups in config.values():
                 self.assertEqual(groups[0]['hooks'][0]['command'], f'python3 "{variable}/bin/crew" hook receive --host {host}')
         self.assertEqual(claude['SubagentStart'][0]['matcher'], '^crew-'); self.assertNotIn('matcher', codex['SubagentStart'][0])
