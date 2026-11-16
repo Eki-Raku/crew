@@ -34,6 +34,7 @@ SOFT_TASK_CAPACITY = 2000
 CLOSED_STATUSES = frozenset(('archived', 'deleted'))
 SESSION_STATUSES = CLOSED_STATUSES | {'active', 'unknown'}
 OPEN_REFRESH_SECONDS = 300  # Skip rewriting an unchanged active association on every prompt.
+CHILD_SESSION_MARKERS = ('/agent/', 'agent:')
 
 
 class ContextError(core.Error):
@@ -551,6 +552,28 @@ class ContextStore:
         with self._transaction() as conn:
             return [{'key': r['key'], 'version': r['version']} for r in
                     conn.execute('SELECT key,version FROM decisions WHERE scope_id=? AND deleted=0 ORDER BY key', (scope_id,))]
+
+    def prune_sessions(self, apply=False, older_than_days=30):
+        """Remove session links only: child-agent links that went quiet, and links to trashed tasks.
+
+        Tasks, state and decisions are never touched. Deleting a link merely means
+        that session id would open a fresh task if it ever returned.
+        """
+        if type(older_than_days) is not int or older_than_days < 0:
+            raise ContextError('older_than_days must be a nonnegative integer')
+        cutoff = time.time() - older_than_days * 86400
+        with self._transaction(apply) as conn:
+            rows = conn.execute('''SELECT s.provider, s.session_id, s.observed_at, t.status AS task_status
+                                   FROM sessions s JOIN tasks t USING(task_id) WHERE s.scope_id=?''', (self.scope_id,)).fetchall()
+            doomed = [(r['provider'], r['session_id']) for r in rows
+                      if r['task_status'] == 'trashed'
+                      or (r['observed_at'] < cutoff and any(m in r['session_id'] for m in CHILD_SESSION_MARKERS))]
+            if apply:
+                conn.executemany('DELETE FROM sessions WHERE scope_id=? AND provider=? AND session_id=?',
+                                 [(self.scope_id, p, sid) for p, sid in doomed])
+            return {'applied': bool(apply), 'candidates': len(doomed), 'removed': len(doomed) if apply else 0,
+                    'older_than_days': older_than_days,
+                    'note': 'Only session links are removed; tasks, state and decisions are retained.'}
 
     def decision_delete(self, key, scope='project', expected_version=None):
         _identifier(key, 'decision key', 128)

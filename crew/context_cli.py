@@ -10,7 +10,7 @@ def say(value): print(i18n.t(value))
 
 def register(command):
     p = command('context')
-    p.add_argument('action', choices=['open', 'read', 'patch', 'checkpoint', 'list', 'archive', 'delete', 'restore', 'session-state', 'decisions', 'decision-set', 'decision-delete', 'decision-restore', 'stats'])
+    p.add_argument('action', choices=['open', 'read', 'patch', 'checkpoint', 'list', 'archive', 'delete', 'restore', 'session-state', 'decisions', 'decision-set', 'decision-delete', 'decision-restore', 'stats', 'prune'])
     p.add_argument('--provider', choices=['codex', 'claude'], help='Session provider; must match --host (defaults to the selected host)')
     p.add_argument('--session'); p.add_argument('--task'); p.add_argument('--title')
     p.add_argument('--since', type=int); p.add_argument('--expected-version', type=int)
@@ -18,6 +18,7 @@ def register(command):
     p.add_argument('--request-id', help='Stable idempotency key for a retried write')
     p.add_argument('--include-archived', action='store_true'); p.add_argument('--include-deleted', action='store_true')
     p.add_argument('--apply', action='store_true')
+    p.add_argument('--older-than-days', type=int, default=30, help='prune: age for quiet child-agent session links')
     p.add_argument('--state', choices=['active', 'archived', 'deleted', 'unknown'])
     p.add_argument('--expected-task'); p.add_argument('--expected-generation', type=int)
     p.add_argument('--scope', choices=['global', 'project'], default='project')
@@ -69,6 +70,7 @@ def run(args, project):
         if not args.apply: return {'operation': action, 'key': args.key, 'scope': args.scope, 'applied': False}
         return getattr(store, 'decision_delete' if action == 'decision-delete' else 'decision_restore')(args.key, scope=args.scope, expected_version=args.expected_version)
     if action == 'stats': return store.stats()
+    if action == 'prune': return store.prune_sessions(apply=args.apply, older_than_days=args.older_than_days)
 
 
 def menu(project, ask, output):

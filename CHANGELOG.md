@@ -5,6 +5,7 @@
 - 回执文件损坏或被手改时，`record`/`doctor` 视为空回执，不再让 Hook 抛异常。
 - Git 探测失败（如 safe.directory）且处于 Git 检出内时，拒绝回退为目录作用域，避免同一项目上下文分叉；非 Git 目录行为不变。
 - `context open` 对近期已刷新且无变化的会话走只读路径，减少并行子 agent 的写锁竞争；决策摘要只查 key/version。
+- 新增 `context prune`（默认预览，`--apply` 执行）：仅清理长期静默的子 agent 会话链接与已删除任务的会话链接，任务、状态和决策不受影响。
 - 工作流 Hook 在 PreToolUse/PostToolUse 遇到无关工具时直接返回，不再打开 Git/SQLite；配置只读取一次。
 - Stop 纠正不再递增工作流版本，避免协调者刚读取状态就遇到版本冲突。
 - `workflow deliver` 把 Git 报告但未被登记的改动写入 `delivery.unlisted_changes`（仅供审查参考，不阻塞；可能包含任务前已有的改动）。

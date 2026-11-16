@@ -99,6 +99,18 @@ class StoreCostTests(Base):
         store.decision_delete('a', expected_version=1)
         self.assertEqual(store.decision_digest(), [])
 
+    def test_prune_removes_only_quiet_child_links_and_trashed_links(self):
+        store = cs.ContextStore(self.project)
+        task = store.open_session('codex', 'main')['task_id']
+        store.open_session('codex', 'main/agent/x', task_id=task)
+        store.open_session('codex', 'old-trashed')
+        gone = store.open_session('codex', 'victim')['task_id']; store.delete(gone)
+        self.assertEqual(store.prune_sessions(older_than_days=30)['candidates'], 1)  # trashed link only
+        self.assertEqual(store.prune_sessions(older_than_days=0)['candidates'], 2)   # plus the child link
+        self.assertEqual(store.prune_sessions(apply=True, older_than_days=0)['removed'], 2)
+        self.assertEqual(store.stats()['sessions'], {'active': 2})
+        self.assertEqual(store.read(task)['task_id'], task)  # tasks are never removed
+
 
 class WorkflowEvidenceTests(Base):
     def setUp(self):
