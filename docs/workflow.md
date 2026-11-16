@@ -42,7 +42,7 @@ crew workflow finish --task ID --expected-version N
 | 结束纠偏 | 相同未完成状态提醒一次；等待、取消、重复纠偏放行 |
 | 恢复 | 当前共享任务、阶段、派发记录继续使用 |
 
-Shell/MCP 写入未纳入编辑门槛。新工作流默认采用 identity 校验：PreToolUse 必须提供与当前实施派发一致的 agent_id、agent_type。缺字段只判为身份无法核验，不猜测它是主控还是旧版执行者。旧宿主可显式使用 `workflow start --edit-policy stage`；已开始的任务可先取消，再用 `workflow next --edit-policy stage` 开启兼容轮次。`workflow read` 会显示实际 edit_protection，stage 保留阶段校验；宿主有身份字段时仍拒绝错误实施者，缺字段时按阶段放行。既有未记录策略的开发版工作流保留 stage 行为。产物指纹覆盖显式声明的路径，未声明文件需由独立审查确认是否遗漏。测试证据和审查结论由 agent 报告，Hook 证明的是派发与生命周期关联。
+Shell/MCP 写入未纳入编辑门槛。新工作流默认采用 identity 校验：PreToolUse 必须提供与当前实施派发一致的 agent_id、agent_type。缺字段只判为身份无法核验，不猜测它是主控还是旧版执行者。旧宿主可显式使用 `workflow start --edit-policy stage`；已开始的任务可先取消，再用 `workflow next --edit-policy stage` 开启兼容轮次。`workflow read` 会显示实际 edit_protection，stage 保留阶段校验；宿主有身份字段时仍拒绝错误实施者，缺字段时按阶段放行。既有未记录策略的开发版工作流保留 stage 行为。产物指纹覆盖显式声明的路径，未声明文件需由独立审查确认是否遗漏；`deliver` 会把 Git 报告但未登记的改动记入 `delivery.unlisted_changes` 供审查者核对（仅作提示，可能含任务前已有的改动）。测试证据和审查结论由 agent 报告，Hook 证明的是派发与生命周期关联。
 
 Hook 需宿主版本支持并信任插件；故障按既有策略放行，工作流不会自动补造回执。`host_enforcement: not_verified` 提醒需要真实客户端验收。CLI 模拟事件测试不能替代客户端测试。Claude 的既有角色/共享上下文管理保持原样，本工作流的自动回执适配先用于 Codex。
 

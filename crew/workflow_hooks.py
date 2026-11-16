@@ -13,13 +13,17 @@ EVENTS = {'SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Suba
 
 def handle(event, project, deadline=None):
     name = event.get('hook_event_name')
-    if hosts.CURRENT != 'codex' or name not in EVENTS or not core.effective(project)['enabled']: return {}
+    if hosts.CURRENT != 'codex' or name not in EVENTS: return {}
     sid = event.get('session_id')
     if not isinstance(sid, str) or not sid or len(sid) > 256: return {}
+    # Tool events that no gate cares about must not pay for git/SQLite/config work.
+    if name in ('PreToolUse', 'PostToolUse') and event.get('tool_name') not in ('apply_patch', 'spawn_agent', 'Agent'): return {}
+    cfg = core.effective(project)
+    if not cfg['enabled']: return {}
     store = WorkflowStore(project, deadline=deadline, busy_timeout=.1)
     data = store.for_session(sid)
     if not data:
-        roles = core.effective(project)['roles']
+        roles = cfg['roles']
         ready = all(r in roles and not roles[r].get('disabled') for r in ('implementer', 'reviewer'))
         command = shlex.join([sys.executable, str(Path(__file__).resolve().parents[1] / 'bin' / 'crew'),
                               '--host', 'codex', 'workflow', 'start', '--project', str(project), '--session', sid,

@@ -33,6 +33,7 @@ MAX_REQUESTS_PER_TASK = 128
 SOFT_TASK_CAPACITY = 2000
 CLOSED_STATUSES = frozenset(('archived', 'deleted'))
 SESSION_STATUSES = CLOSED_STATUSES | {'active', 'unknown'}
+OPEN_REFRESH_SECONDS = 300  # Skip rewriting an unchanged active association on every prompt.
 
 
 class ContextError(core.Error):
@@ -120,6 +121,10 @@ def _remaining(deadline, maximum):
     return min(maximum, remaining)
 
 
+def _inside_git_checkout(root):
+    return any((candidate / '.git').exists() for candidate in (root, *root.parents))
+
+
 def project_scope(project, *, deadline=None):
     """Resolve worktrees to their Git common directory without reading sessions.
 
@@ -135,11 +140,17 @@ def project_scope(project, *, deadline=None):
             common = Path(result.stdout.strip())
             common = (common if common.is_absolute() else root / common).resolve()
             identity = 'git:' + str(common)
+        elif 'not a git repository' not in result.stderr.lower() and _inside_git_checkout(root):
+            # Git failed (for example safe.directory) in a real checkout: falling back
+            # would silently fork this project's context into a second scope.
+            raise ContextError('Git scope detection failed inside a Git checkout' + (': ' + result.stderr.strip()[:200] if result.stderr.strip() else '') + '; context was not opened in a different scope')
         else:
             identity = 'directory:' + str(root)
     except subprocess.TimeoutExpired as exc:
         raise ContextError('Git scope detection timed out; context was not opened in a different scope') from exc
     except OSError:
+        if _inside_git_checkout(root):
+            raise ContextError('Git is unavailable inside a Git checkout; context was not opened in a different scope')
         identity = 'directory:' + str(root)
     return hashlib.sha256(identity.encode()).hexdigest(), identity
 
@@ -291,6 +302,9 @@ class ContextStore:
         session_id = _identifier(session_id, 'session_id')
         if title is not None:
             _identifier(title, 'title', 256)
+        fast = self._open_unchanged(provider, session_id, task_id)
+        if fast is not None:
+            return fast
         with self._transaction(True) as conn:
             previous = conn.execute('SELECT * FROM sessions WHERE scope_id=? AND provider=? AND session_id=?',
                                     (self.scope_id, provider, session_id)).fetchone()
@@ -321,6 +335,29 @@ class ContextStore:
                                    'generation': generation, 'status': 'active',
                                    'task_id': target}, warnings=self._warnings(conn))
             return result
+
+    def _open_unchanged(self, provider, session_id, task_id):
+        """Read-only fast path for a recently refreshed, unchanged active association.
+
+        Hooks call open_session on every prompt; avoid the write lock (and lock
+        contention with parallel subagents) unless something actually changed.
+        """
+        with self._transaction() as conn:
+            previous = conn.execute('SELECT * FROM sessions WHERE scope_id=? AND provider=? AND session_id=?',
+                                    (self.scope_id, provider, session_id)).fetchone()
+            if (previous is None or previous['status'] != 'active'
+                    or (task_id is not None and task_id != previous['task_id'])
+                    or time.time() - previous['observed_at'] > OPEN_REFRESH_SECONDS):
+                return None
+            row = conn.execute('SELECT * FROM tasks WHERE scope_id=? AND task_id=?',
+                               (self.scope_id, previous['task_id'])).fetchone()
+            if row is None or row['status'] != 'active':
+                return None
+            return dict(self._brief(row), state=json.loads(row['state']), reset=False, created=False,
+                        scope_id=self.scope_id,
+                        session={'provider': provider, 'session_id': session_id,
+                                 'generation': previous['generation'], 'status': 'active',
+                                 'task_id': row['task_id']}, warnings=self._warnings(conn))
 
     def read(self, task_id, since=None):
         if since is not None:
@@ -507,6 +544,13 @@ class ContextStore:
             # Deleted content remains recoverable but is not returned implicitly.
             return [dict(key=r['key'], version=r['version'], scope=scope, deleted=bool(r['deleted']),
                          **({'value': r['value']} if not r['deleted'] else {})) for r in rows]
+
+    def decision_digest(self, scope='project'):
+        """Key/version pairs only (no values) for cheap change detection."""
+        scope_id = self._decision_scope(scope)
+        with self._transaction() as conn:
+            return [{'key': r['key'], 'version': r['version']} for r in
+                    conn.execute('SELECT key,version FROM decisions WHERE scope_id=? AND deleted=0 ORDER BY key', (scope_id,))]
 
     def decision_delete(self, key, scope='project', expected_version=None):
         _identifier(key, 'decision key', 128)

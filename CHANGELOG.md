@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- 回执文件损坏或被手改时，`record`/`doctor` 视为空回执，不再让 Hook 抛异常。
+- Git 探测失败（如 safe.directory）且处于 Git 检出内时，拒绝回退为目录作用域，避免同一项目上下文分叉；非 Git 目录行为不变。
+- `context open` 对近期已刷新且无变化的会话走只读路径，减少并行子 agent 的写锁竞争；决策摘要只查 key/version。
+- 工作流 Hook 在 PreToolUse/PostToolUse 遇到无关工具时直接返回，不再打开 Git/SQLite；配置只读取一次。
+- Stop 纠正不再递增工作流版本，避免协调者刚读取状态就遇到版本冲突。
+- `workflow deliver` 把 Git 报告但未被登记的改动写入 `delivery.unlisted_changes`（仅供审查参考，不阻塞；可能包含任务前已有的改动）。
+- 产物路径对 `.git` 的拒绝改为大小写无关；工作流表增加 `workflow_meta` schema 记录；`_change` 拆为按动作分发的方法。
+- `setup` 只保留最近 5 份 AGENTS 备份；`doctor` 检查 AGENTS 条目里的 CLI 路径是否仍存在；原子写入同步父目录；Claude 导出转义 U+0085/U+2028/U+2029；移除未使用的 `tomllib` 导入。
+
 ## 0.4.1
 
 - 拒绝项目配置、向导、导出目录/文件、锁、共享数据库及 SQLite sidecar 中的符号链接，防止项目操作改写或清理外部/全局数据。配置读写、原子替换和清理使用不跟随链接的目录句柄。

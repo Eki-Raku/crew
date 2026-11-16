@@ -9,7 +9,6 @@ import re
 import stat
 import uuid
 import time
-import tomllib
 try:
     import fcntl
 except ImportError:
@@ -175,6 +174,8 @@ def atomic(p, text):
                 f.write(text); f.flush(); os.fsync(f.fileno())
             safe_path(p)  # Fail if the directory/leaf was redirected during preparation.
             os.replace(tmp, p.name, src_dir_fd=parent, dst_dir_fd=parent)
+            try: os.fsync(parent)  # Persist the rename itself, not only the file contents.
+            except OSError: pass
         finally:
             try: os.unlink(tmp, dir_fd=parent)
             except FileNotFoundError: pass
@@ -293,6 +294,24 @@ def entry_remove(text):
 
 NO_ENTRY = 'Claude Code needs no global entry: the SessionStart hook already delivers the Crew status each session, and CLAUDE.md is left untouched.'
 
+BACKUPS_KEPT = 5
+
+def _prune_backups(p):
+    """Keep only the newest few AGENTS backups so repeated setup cannot accumulate files."""
+    prefix = p.name + '.crew-backup-'
+    backups = sorted((q for q in p.parent.glob(prefix + '*') if q.name[len(prefix):].isdigit()),
+                     key=lambda q: int(q.name[len(prefix):]))
+    for q in backups[:-BACKUPS_KEPT]:
+        try: remove_file(q)
+        except (OSError, Error): pass
+
+def entry_command(text):
+    """The Crew CLI path recorded in an AGENTS entry, or None."""
+    if START not in text or END not in text: return None
+    found = re.search(r'Crew CLI at ("(?:[^"\\]|\\.)*")', text[text.index(START):])
+    try: return json.loads(found.group(1)) if found else None
+    except ValueError: return None
+
 def setup(apply=False):
     if hosts.CURRENT != 'codex': return {'host': hosts.CURRENT, 'status': 'not_applicable', 'changed': False, 'applied': False, 'note': NO_ENTRY}
     p = agents_target()
@@ -303,7 +322,9 @@ def setup(apply=False):
         clean = entry_remove(old)
         new = clean + ('' if not clean or clean.endswith('\n') else '\n') + START + '\n' + line + '\n' + END + '\n'
         if apply and new != old:
-            if p.exists(): atomic(Path(str(p) + '.crew-backup-' + str(time.time_ns())), old)
+            if p.exists():
+                atomic(Path(str(p) + '.crew-backup-' + str(time.time_ns())), old)
+                _prune_backups(p)
             atomic(p, new)
     return {'target': str(p), 'entry': line, 'changed': old != new, 'applied': apply,
             'next': 'Configure roles, then export them. This command does not install or enable the host plugin.'}
@@ -323,12 +344,23 @@ def uninstall(apply=False):
 def receipt_path(project):
     return home() / 'crew' / 'receipts' / (hashlib.sha256(str(project_root(project)).encode()).hexdigest()[:20] + '.json')
 
+def _receipts(p):
+    """Read a receipt file; a damaged or hand-edited file is treated as empty."""
+    empty_data = {'events': [], 'auto_compactions': {}}
+    if not p.exists(): return empty_data
+    try: data = json.loads(read_text(p))
+    except (ValueError, OSError): return empty_data
+    if not isinstance(data, dict): return empty_data
+    if not isinstance(data.get('events'), list): data['events'] = []
+    if not isinstance(data.get('auto_compactions'), dict): data['auto_compactions'] = {}
+    return data
+
 def record(event, project, simulated=False, lock_timeout=2):
     # Intentionally never persist conversation content, tool inputs or secrets.
     name = event.get('hook_event_name', event.get('event', 'Unknown'))
     p = receipt_path(project)
     with lock(p, timeout=lock_timeout):
-        data = json.loads(read_text(p)) if p.exists() else {'events': [], 'auto_compactions': {}}
+        data = _receipts(p)
         sid = str(event.get('session_id', 'unknown'))[:200]
         row = {'event': str(name)[:80], 'session_id': sid, 'time': dt.datetime.now(dt.timezone.utc).isoformat(),
                'simulated': simulated, 'trigger': str(event.get('trigger', ''))[:30]}
@@ -373,11 +405,16 @@ def preflight(project):
 
 def doctor(project):
     cfg = effective(project); p = receipt_path(project)
-    events = json.loads(read_text(p)) if p.exists() else {'events': [], 'auto_compactions': {}}
+    events = _receipts(p)
     result = dict(hosts.describe(), version=__version__, plugin_root=str(Path(__file__).resolve().parents[1]), preflight=preflight(project), effective=cfg, home=str(home()), hook_receipts=events)
     if hosts.CURRENT == 'codex':
         target = agents_target()
-        result.update(codex_home=str(home()), agents_file=str(target), entry_present=target.exists() and START in read_text(target))
+        text = read_text(target) if target.exists() else ''
+        recorded = entry_command(text)
+        result.update(codex_home=str(home()), agents_file=str(target), entry_present=START in text,
+                      entry_command=recorded, entry_command_exists=bool(recorded) and Path(recorded).exists())
+        if recorded and not Path(recorded).exists():
+            result.setdefault('warnings', []).append('AGENTS entry points to a missing Crew CLI (plugin moved or upgraded); rerun setup --apply.')
         client = 'Host enablement and model entitlement require the actual Codex client.'
     else:
         client = 'Plugin enablement and model access require the actual Claude Code client.'

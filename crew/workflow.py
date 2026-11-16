@@ -6,12 +6,14 @@ Hook receipts are local observations, not a security boundary against the local 
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import uuid
 
 from . import core, hosts, i18n
 from .context_store import ContextStore, ConflictError, _identifier, _version
 
 TERMINAL = {'completed', 'cancelled'}
+WORKFLOW_SCHEMA = 1
 
 
 def text(value, name):
@@ -28,7 +30,7 @@ def fingerprint(project, files):
     for name in files:
         _identifier(name, 'artifact path', 512)
         path = Path(name)
-        if path.is_absolute() or '..' in path.parts or not path.parts or '.git' in path.parts:
+        if path.is_absolute() or '..' in path.parts or not path.parts or '.git' in {part.lower() for part in path.parts}:
             raise core.Error('Artifact paths must stay inside the project')
         full = root / path
         # Refuse symlinks in every component, including symlinks pointing inward.
@@ -44,6 +46,29 @@ def fingerprint(project, files):
     return result
 
 
+def dirty_paths(project):
+    """Paths Git reports as modified/untracked, or [] when Git cannot answer.
+
+    Used only to show reviewers changes the deliverer did not list. It is advisory:
+    pre-existing dirty files appear too, and failures never block a delivery.
+    """
+    try:
+        out = subprocess.run(['git', '-C', str(Path(project).resolve()), 'status', '--porcelain', '-z', '--untracked-files=all'],
+                             capture_output=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if out.returncode != 0: return []
+    paths = set()
+    entries = out.stdout.decode('utf-8', 'replace').split('\0')
+    skip = False
+    for entry in entries:
+        if skip: skip = False; paths.add(entry); continue  # rename source follows the destination
+        if len(entry) < 4: continue
+        if entry[0] in 'RC' or entry[1] in 'RC': skip = True
+        paths.add(entry[3:])
+    return sorted(p for p in paths if p and not p.startswith('.crew/'))
+
+
 class WorkflowStore:
     def __init__(self, project, **kwargs):
         self.context = ContextStore(project, **kwargs)
@@ -53,6 +78,19 @@ class WorkflowStore:
         if not exists:
             with self.context._transaction(write=True) as conn:
                 conn.execute('CREATE TABLE IF NOT EXISTS workflows (task_id TEXT PRIMARY KEY REFERENCES tasks(task_id), version INTEGER NOT NULL, data TEXT NOT NULL)')
+                conn.execute('CREATE TABLE IF NOT EXISTS workflow_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+                conn.execute("INSERT OR IGNORE INTO workflow_meta VALUES('schema', ?)", (str(WORKFLOW_SCHEMA),))
+        else:
+            self._check_schema()
+
+    def _check_schema(self):
+        # Databases created before workflow_meta existed are schema 1 by definition.
+        with self.context._transaction() as conn:
+            meta = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='workflow_meta'").fetchone()
+            if not meta: return
+            row = conn.execute("SELECT value FROM workflow_meta WHERE key='schema'").fetchone()
+        if row and row['value'] != str(WORKFLOW_SCHEMA):
+            raise core.Error('Unsupported workflow schema ' + row['value'] + '; keep a backup before migrating')
 
     def _get(self, conn, task):
         row = self.context._task(conn, task)
@@ -110,77 +148,97 @@ class WorkflowStore:
         if action in ('resource-add', 'resource-release', 'resource-retain'):
             self._resource(d, action, a)
             return
-        if action == 'next':
-            if phase not in TERMINAL: raise core.Error('Finish or cancel this workflow before starting the next goal')
-            self._clean(d)
-            policy = a.get('edit_policy') or d.get('edit_policy', 'stage')
-            if policy not in ('identity', 'stage'): raise core.Error('Invalid edit policy')
-            d.update(edit_policy=policy, goal=text(a['goal'], 'goal'), acceptance=text(a.get('acceptance') or a['goal'], 'acceptance'), phase='awaiting_assignment', attempt=None,
-                     delivery=None, review=None, resources={}, implementer_ids=[], correction=None, lifecycle=[], observed_events=[])
-            d.pop('reason', None); d.pop('resume_phase', None); d.pop('previous_review', None); d.pop('resume_evidence', None); d.pop('retry_reason', None)
-            return
-        if action == 'cancel':
-            if phase == 'completed': raise core.Error('Completed workflow cannot be cancelled')
-            d.update(phase='cancelled', reason=text(a['reason'], 'reason')); return
+        if action == 'next': return self._next(d, a)
+        if action == 'cancel': return self._cancel(d, a)
         if phase in TERMINAL: raise core.Error('Workflow is closed')
-        if action == 'pause':
-            if phase == 'blocked': raise core.Error('Workflow is already paused')
-            d.update(resume_phase=phase, phase='blocked', reason=text(a['reason'], 'reason')); return
-        if action == 'resume':
-            if phase != 'blocked': raise core.Error('Workflow is not paused')
-            d['resume_evidence'] = text(a.get('reason'), 'resume evidence')
-            d['phase'] = d.pop('resume_phase'); d.pop('reason', None); return
+        if action == 'pause': return self._pause(d, a)
+        if action == 'resume': return self._resume(d, a)
         if phase == 'blocked': raise core.Error('Resume the workflow before continuing')
-        if action == 'dispatch':
-            if phase not in ('awaiting_assignment', 'needs_review', 'changes_needed'):
-                raise core.Error('This stage already has an assignment; wait or retry explicitly')
-            stage = 'review' if phase == 'needs_review' else 'implementation'
-            role = d['reviewer' if stage == 'review' else 'implementer']
-            configured = core.effective(self.project)['roles'].get(role)
-            if not configured or configured.get('disabled'): raise core.Error('Role is no longer enabled')
-            token = uuid.uuid4().hex
-            d['lifecycle'] = []
-            d.update(attempt=dict(token=token, stage=stage, role=role, model=configured['model'], effort=configured['effort'], agent_id=None, tool_use_id=None,
-                                  started=False, stopped=False), phase='dispatch_pending')
-            if stage == 'implementation':
-                d['previous_review'] = d.get('review') or d.get('previous_review')
-                d.update(delivery=None, review=None)
-            return
-        if action == 'retry':
-            if not d['attempt'] and phase not in ('ready', 'needs_review', 'changes_needed'):
-                raise core.Error('No assignment to retry')
-            text(a['reason'], 'reason')
-            # A ready/delivered artifact can be explicitly invalidated and rebuilt.
-            d['phase'] = 'needs_review' if d['attempt'] and d['attempt']['stage'] == 'review' else 'changes_needed'
-            if d['phase'] == 'needs_review':
-                try: self._current(d)
-                except (core.Error, OSError): d['phase'] = 'changes_needed'
-            if d['phase'] == 'changes_needed':
-                d['previous_review'] = d.get('review') or d.get('previous_review')
-                d.update(delivery=None, review=None)
-            d['attempt'] = None
-            d['retry_reason'] = a['reason']
-            return
-        if action == 'deliver':
-            attempt = self._ready(d, 'implementation')
-            files = fingerprint(self.project, a['files'])
-            d['delivery'] = dict(agent_id=attempt['agent_id'], role=attempt['role'], configured_model=attempt['model'], configured_effort=attempt['effort'], files=files, summary=text(a['summary'], 'summary'), tests=text(a['tests'], 'tests'))
-            d.update(phase='needs_review', attempt=None, review=None); return
-        if action == 'review':
-            attempt = self._ready(d, 'review')
-            if attempt['agent_id'] in d['implementer_ids']: raise core.Error('Reviewer must be independent of the implementers')
-            self._current(d)
-            if a['verdict'] not in ('pass', 'changes'): raise core.Error('Invalid review verdict')
-            if a['verdict'] == 'pass': self._clean(d)
-            d['review'] = dict(agent_id=attempt['agent_id'], role=attempt['role'], configured_model=attempt['model'], configured_effort=attempt['effort'], files=d['delivery']['files'], verdict=a['verdict'], summary=text(a['summary'], 'summary'))
-            d.update(phase='ready' if a['verdict'] == 'pass' else 'changes_needed', attempt=None); return
-        if action == 'finish':
-            if phase != 'ready' or not d['review'] or d['review']['verdict'] != 'pass':
-                raise core.Error('Implementation and independent review are required')
-            self._current(d)
-            self._clean(d)
-            d['phase'] = 'completed'; return
-        raise core.Error('Invalid workflow action')
+        handler = self.ACTIONS.get(action)
+        if handler is None: raise core.Error('Invalid workflow action')
+        return handler(self, d, a)
+
+    def _next(self, d, a):
+        if d['phase'] not in TERMINAL: raise core.Error('Finish or cancel this workflow before starting the next goal')
+        self._clean(d)
+        # A stored cycle always carries its policy; the fallback only serves records
+        # written before edit_policy existed, which were stage-only by definition.
+        policy = a.get('edit_policy') or d.get('edit_policy', 'stage')
+        if policy not in ('identity', 'stage'): raise core.Error('Invalid edit policy')
+        d.update(edit_policy=policy, goal=text(a['goal'], 'goal'), acceptance=text(a.get('acceptance') or a['goal'], 'acceptance'), phase='awaiting_assignment', attempt=None,
+                 delivery=None, review=None, resources={}, implementer_ids=[], correction=None, lifecycle=[], observed_events=[])
+        for key in ('reason', 'resume_phase', 'previous_review', 'resume_evidence', 'retry_reason'): d.pop(key, None)
+
+    def _cancel(self, d, a):
+        if d['phase'] == 'completed': raise core.Error('Completed workflow cannot be cancelled')
+        d.update(phase='cancelled', reason=text(a['reason'], 'reason'))
+
+    def _pause(self, d, a):
+        if d['phase'] == 'blocked': raise core.Error('Workflow is already paused')
+        d.update(resume_phase=d['phase'], phase='blocked', reason=text(a['reason'], 'reason'))
+
+    def _resume(self, d, a):
+        if d['phase'] != 'blocked': raise core.Error('Workflow is not paused')
+        d['resume_evidence'] = text(a.get('reason'), 'resume evidence')
+        d['phase'] = d.pop('resume_phase'); d.pop('reason', None)
+
+    def _dispatch(self, d, a):
+        if d['phase'] not in ('awaiting_assignment', 'needs_review', 'changes_needed'):
+            raise core.Error('This stage already has an assignment; wait or retry explicitly')
+        stage = 'review' if d['phase'] == 'needs_review' else 'implementation'
+        role = d['reviewer' if stage == 'review' else 'implementer']
+        configured = core.effective(self.project)['roles'].get(role)
+        if not configured or configured.get('disabled'): raise core.Error('Role is no longer enabled')
+        token = uuid.uuid4().hex
+        d['lifecycle'] = []
+        d.update(attempt=dict(token=token, stage=stage, role=role, model=configured['model'], effort=configured['effort'], agent_id=None, tool_use_id=None,
+                              started=False, stopped=False), phase='dispatch_pending')
+        if stage == 'implementation':
+            d['previous_review'] = d.get('review') or d.get('previous_review')
+            d.update(delivery=None, review=None)
+
+    def _retry(self, d, a):
+        phase = d['phase']
+        if not d['attempt'] and phase not in ('ready', 'needs_review', 'changes_needed'):
+            raise core.Error('No assignment to retry')
+        text(a['reason'], 'reason')
+        # A ready/delivered artifact can be explicitly invalidated and rebuilt.
+        d['phase'] = 'needs_review' if d['attempt'] and d['attempt']['stage'] == 'review' else 'changes_needed'
+        if d['phase'] == 'needs_review':
+            try: self._current(d)
+            except (core.Error, OSError): d['phase'] = 'changes_needed'
+        if d['phase'] == 'changes_needed':
+            d['previous_review'] = d.get('review') or d.get('previous_review')
+            d.update(delivery=None, review=None)
+        d['attempt'] = None
+        d['retry_reason'] = a['reason']
+
+    def _deliver(self, d, a):
+        attempt = self._ready(d, 'implementation')
+        files = fingerprint(self.project, a['files'])
+        # Reviewers also see dirty paths the deliverer did not list (advisory only).
+        unlisted = [path for path in dirty_paths(self.project) if path not in files][:50]
+        d['delivery'] = dict(agent_id=attempt['agent_id'], role=attempt['role'], configured_model=attempt['model'], configured_effort=attempt['effort'], files=files, summary=text(a['summary'], 'summary'), tests=text(a['tests'], 'tests'))
+        if unlisted: d['delivery']['unlisted_changes'] = unlisted
+        d.update(phase='needs_review', attempt=None, review=None)
+
+    def _review(self, d, a):
+        attempt = self._ready(d, 'review')
+        if attempt['agent_id'] in d['implementer_ids']: raise core.Error('Reviewer must be independent of the implementers')
+        self._current(d)
+        if a['verdict'] not in ('pass', 'changes'): raise core.Error('Invalid review verdict')
+        if a['verdict'] == 'pass': self._clean(d)
+        d['review'] = dict(agent_id=attempt['agent_id'], role=attempt['role'], configured_model=attempt['model'], configured_effort=attempt['effort'], files=d['delivery']['files'], verdict=a['verdict'], summary=text(a['summary'], 'summary'))
+        d.update(phase='ready' if a['verdict'] == 'pass' else 'changes_needed', attempt=None)
+
+    def _finish(self, d, a):
+        if d['phase'] != 'ready' or not d['review'] or d['review']['verdict'] != 'pass':
+            raise core.Error('Implementation and independent review are required')
+        self._current(d)
+        self._clean(d)
+        d['phase'] = 'completed'
+
+    ACTIONS = {'dispatch': _dispatch, 'retry': _retry, 'deliver': _deliver, 'review': _review, 'finish': _finish}
 
     def _clean(self, d):
         if any(r['status'] == 'open' for r in d.get('resources', {}).values()):
@@ -261,9 +319,12 @@ class WorkflowStore:
             key = json.dumps([d['phase'], d['attempt'], d['delivery'], d['review']], sort_keys=True)
             digest = hashlib.sha256(key.encode()).hexdigest()
             if d['correction'] == digest: return None
+            # Bookkeeping only: do not bump the CAS version, or a coordinator that just
+            # read the workflow would hit a conflict caused by its own Stop hook.
             d['correction'] = digest
-            self._save(conn, d)
-            return instruction(dict(d, task_id=task))
+            version = d.pop('version'); d.pop('task_id')
+            conn.execute('UPDATE workflows SET data=? WHERE task_id=?', (json.dumps(d), task))
+            return instruction(dict(d, task_id=task, version=version))
 
 
 def instruction(d):

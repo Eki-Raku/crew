@@ -54,7 +54,7 @@ def handle(event, project, *, deadline=None):
         # Long-lived decisions stay separately scoped and versioned. Send metadata,
         # not the entire decisions text every turn; skill instructs an initial read.
         for scope in ('global', 'project'):
-            decisions = store.decision_list(scope=scope)
+            decisions = store.decision_digest(scope=scope)
             packet[scope + '_decisions'] = decisions_metadata(decisions)
         command = context_command(project, 'read', '--task', opened['task_id'])
         instruction = 'Read initial state and scoped decisions once; later use read --since <known-version>. Before continuing, replace any cached task state if task_id changed. Save concise changes with patch and expected-version after milestones.'

@@ -126,7 +126,9 @@ def with_enabled(config, value, host=None):
 def _quote(value):
     # JSON and TOML basic strings differ at DEL; escape it rather than emit an
     # illegal literal. Keep Unicode readable and preserve the original value.
-    return json.dumps(value, ensure_ascii=False).replace('\x7f', '\\u007f')
+    text = json.dumps(value, ensure_ascii=False).replace('\x7f', '\\u007f')
+    # YAML 1.1 parsers treat these as line breaks inside quoted scalars.
+    return text.replace('\u0085', '\\u0085').replace('\u2028', '\\u2028').replace('\u2029', '\\u2029')
 
 
 class CodexExport:

@@ -70,7 +70,7 @@
 | Codex | macOS、Linux | 在支持本地插件的 Codex 中添加 Crew 目录或导入 ZIP | `.codex/agents/crew-*.toml` |
 | Claude Code | macOS、Linux | 用 `--plugin-dir` 启动，或登记为本地插件市场 | `.claude/agents/crew-*.md` |
 
-需要 Python 3.11+。CLI、终端菜单和预设提示词都支持简体中文和英文，可以用 `--lang zh` 或 `--lang en` 切换。
+需要 Python 3.11+，仅支持 macOS/Linux（依赖 POSIX 目录句柄，不支持 Windows）。CLI、终端菜单和预设提示词都支持简体中文和英文，可以用 `--lang zh` 或 `--lang en` 切换。
 
 平时不想记命令的话，直接跑 `crew tui` 就能打开终端菜单，在里面改角色、跑初始化向导、导出配置或者查看当前任务状态：
 

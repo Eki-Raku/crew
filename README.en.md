@@ -66,7 +66,7 @@ Converted using standard [OpenAI API pricing](https://developers.openai.com/api/
 | Codex | macOS, Linux | Add the Crew directory or import the ZIP as a local plugin | `.codex/agents/crew-*.toml` |
 | Claude Code | macOS, Linux | Start with `--plugin-dir` or register a local marketplace | `.claude/agents/crew-*.md` |
 
-Requires Python 3.11+. Switch CLI and template languages anytime with `--lang en` or `--lang zh`.
+Requires Python 3.11+ on macOS/Linux (POSIX directory handles are required; Windows is not supported). Switch CLI and template languages anytime with `--lang en` or `--lang zh`.
 
 If you prefer not to memorize flags, run `crew tui` to open the terminal menu for role management, guided setup, exports, and shared task state:
 
